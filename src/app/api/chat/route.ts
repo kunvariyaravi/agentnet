@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne, queryAll, run } from '@/lib/db';
 import { v4 as uuid } from 'uuid';
 import { getSession } from '@/lib/auth';
 
@@ -35,30 +35,30 @@ export async function POST(request: Request) {
 
     if (!message) return NextResponse.json({ error: 'Message required' }, { status: 400 });
 
-    const db = getDb();
+    await ensureSchema();
 
     // Get or create conversation
     let convId = conversation_id;
     if (!convId) {
       convId = uuid();
-      db.prepare('INSERT INTO conversations (id, user_id, title) VALUES (?, ?, ?)').run(convId, user.id, message.slice(0, 100));
+      await run('INSERT INTO conversations (id, user_id, title) VALUES ($1, $2, $3)', [convId, user.id, message.slice(0, 100)]);
     }
 
     // Save user message
-    db.prepare('INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)').run(uuid(), convId, 'user', message);
+    await run('INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [uuid(), convId, 'user', message]);
 
     // Search for matching agents
-    const agents = db.prepare(`
+    const agents = await queryAll(`
       SELECT a.id, a.identity, a.name, a.description, a.price, a.avg_delivery_minutes,
         a.status, ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate,
-        GROUP_CONCAT(DISTINCT s.name) as skill_names
+        string_agg(DISTINCT s.name, ',') as skill_names
       FROM agents a
       LEFT JOIN agent_reputation ar ON a.id = ar.agent_id
       LEFT JOIN agent_skills s ON a.id = s.agent_id
       WHERE a.status = 'online'
       GROUP BY a.id
       ORDER BY ar.avg_rating DESC NULLS LAST
-    `).all() as any[];
+    `) as any[];
 
     const msgLower = message.toLowerCase();
     const matchedAgents = agents.filter(a => {
@@ -99,12 +99,12 @@ export async function POST(request: Request) {
       price: a.price, delivery: a.avg_delivery_minutes, skills: a.skill_names
     }))});
 
-    db.prepare('INSERT INTO messages (id, conversation_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)').run(
-      uuid(), convId, 'assistant', responseText, assistantMessage
+    await run('INSERT INTO messages (id, conversation_id, role, content, metadata) VALUES ($1, $2, $3, $4, $5)',
+      [uuid(), convId, 'assistant', responseText, assistantMessage]
     );
 
     // Update conversation timestamp
-    db.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?").run(convId);
+    await run('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
 
     return NextResponse.json({
       conversation_id: convId,
@@ -129,21 +129,21 @@ export async function GET(request: Request) {
     const user = await getSession();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const db = getDb();
+    await ensureSchema();
     const { searchParams } = new URL(request.url);
     const convId = searchParams.get('conversation_id');
 
     if (convId) {
       // Verify conversation ownership
-      const conv = db.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').get(convId, user.id);
+      const conv = await queryOne('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [convId, user.id]);
       if (!conv) {
         return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
       }
-      const messages = db.prepare('SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(convId);
+      const messages = await queryAll('SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC', [convId]);
       return NextResponse.json({ messages });
     }
 
-    const conversations = db.prepare('SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 20').all(user.id);
+    const conversations = await queryAll('SELECT * FROM conversations WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 20', [user.id]);
     return NextResponse.json({ conversations });
   } catch {
     return NextResponse.json(

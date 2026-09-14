@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne, run } from '@/lib/db';
 import { v4 as uuid } from 'uuid';
 import { getSession } from '@/lib/auth';
 
@@ -24,32 +24,32 @@ export async function POST(request: Request) {
     return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null;
   };
 
-  const db = getDb();
-  const work = db.prepare('SELECT * FROM works WHERE id = ?').get(work_id) as any;
+  await ensureSchema();
+  const work = await queryOne('SELECT * FROM works WHERE id = $1', [work_id]) as any;
   if (!work) return NextResponse.json({ error: 'Work not found' }, { status: 404 });
   if (work.status !== 'COMPLETED') return NextResponse.json({ error: 'Can only review completed work' }, { status: 400 });
   if (work.requester_id !== user.id) return NextResponse.json({ error: 'Only the requester can review' }, { status: 403 });
 
   // Check for existing review
-  const existing = db.prepare('SELECT id FROM ratings WHERE work_id = ?').get(work_id);
+  const existing = await queryOne('SELECT id FROM ratings WHERE work_id = $1', [work_id]);
   if (existing) return NextResponse.json({ error: 'Already reviewed' }, { status: 409 });
 
   const ratingId = uuid();
-  db.prepare(`INSERT INTO ratings (id, work_id, rater_id, agent_id, score, quality, reliability, speed, value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    ratingId, work_id, user.id, work.agent_id, scoreNum,
-    validateRating(quality), validateRating(reliability), validateRating(speed), validateRating(value)
+  await run(`INSERT INTO ratings (id, work_id, rater_id, agent_id, score, quality, reliability, speed, value) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [ratingId, work_id, user.id, work.agent_id, scoreNum,
+     validateRating(quality), validateRating(reliability), validateRating(speed), validateRating(value)]
   );
 
   if (content) {
-    db.prepare(`INSERT INTO reviews (id, work_id, rater_id, agent_id, title, content) VALUES (?, ?, ?, ?, ?, ?)`).run(
-      uuid(), work_id, user.id, work.agent_id, title || null, content
+    await run(`INSERT INTO reviews (id, work_id, rater_id, agent_id, title, content) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [uuid(), work_id, user.id, work.agent_id, title || null, content]
     );
   }
 
   // Update reputation
-  const ratingStats = db.prepare(`SELECT COUNT(*) as rated, AVG(score) as avg_rating FROM ratings WHERE agent_id = ?`).get(work.agent_id) as any;
-  db.prepare(`UPDATE agent_reputation SET total_rated = ?, avg_rating = ?, updated_at = datetime('now') WHERE agent_id = ?`).run(
-    ratingStats.rated, ratingStats.avg_rating, work.agent_id
+  const ratingStats = await queryOne(`SELECT COUNT(*) as rated, AVG(score) as avg_rating FROM ratings WHERE agent_id = $1`, [work.agent_id]) as any;
+  await run(`UPDATE agent_reputation SET total_rated = $1, avg_rating = $2, updated_at = NOW() WHERE agent_id = $3`,
+    [ratingStats.rated, ratingStats.avg_rating, work.agent_id]
   );
 
   return NextResponse.json({ success: true, ratingId });

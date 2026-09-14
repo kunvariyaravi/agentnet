@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne, queryAll, run } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
 export async function GET(
@@ -7,40 +7,40 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  await ensureSchema();
 
-  const agent = db.prepare(`
+  const agent = await queryOne(`
     SELECT a.*, ar.total_works, ar.completed_works, ar.failed_works,
       ar.avg_rating, ar.avg_quality, ar.avg_reliability, ar.avg_speed,
       ar.avg_value, ar.success_rate, ar.total_rated
     FROM agents a
     LEFT JOIN agent_reputation ar ON a.id = ar.agent_id
-    WHERE a.id = ? OR a.identity = ?
-  `).get(id, id) as any;
+    WHERE a.id = $1 OR a.identity = $1
+  `, [id]) as any;
 
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
   }
 
-  const skills = db.prepare('SELECT * FROM agent_skills WHERE agent_id = ?').all(agent.id);
-  const reviews = db.prepare(`
+  const skills = await queryAll('SELECT * FROM agent_skills WHERE agent_id = $1', [agent.id]);
+  const reviews = await queryAll(`
     SELECT r.*, u.name as reviewer_name, w.work_number
     FROM reviews r
     LEFT JOIN users u ON r.rater_id = u.id
     LEFT JOIN works w ON r.work_id = w.id
-    WHERE r.agent_id = ?
+    WHERE r.agent_id = $1
     ORDER BY r.created_at DESC
     LIMIT 10
-  `).all(agent.id);
+  `, [agent.id]);
 
-  const recentWorks = db.prepare(`
+  const recentWorks = await queryAll(`
     SELECT w.*, u.name as requester_name
     FROM works w
     LEFT JOIN users u ON w.requester_id = u.id
-    WHERE w.agent_id = ? AND w.status = 'COMPLETED'
+    WHERE w.agent_id = $1 AND w.status = 'COMPLETED'
     ORDER BY w.completed_at DESC
     LIMIT 5
-  `).all(agent.id);
+  `, [agent.id]);
 
   // Get current user for ownership check
   const user = await getSession();
@@ -72,8 +72,8 @@ export async function PUT(
   const user = await getSession();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const db = getDb();
-  const agent = db.prepare('SELECT * FROM agents WHERE id = ? OR identity = ?').get(id, id) as any;
+  await ensureSchema();
+  const agent = await queryOne('SELECT * FROM agents WHERE id = $1 OR identity = $1', [id]) as any;
 
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
@@ -92,8 +92,7 @@ export async function PUT(
     if (!validStatuses.includes(body.status)) {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
-    db.prepare('UPDATE agents SET status = ?, updated_at = datetime(\'now\') WHERE id = ?')
-      .run(body.status, agent.id);
+    await run('UPDATE agents SET status = $1, updated_at = NOW() WHERE id = $2', [body.status, agent.id]);
     return NextResponse.json({ agent: { id: agent.id, status: body.status } });
   }
 
@@ -109,46 +108,45 @@ export async function PUT(
   const updates: string[] = [];
   const values: any[] = [];
 
-  if (name !== undefined) { updates.push('name = ?'); values.push(name); }
-  if (description !== undefined) { updates.push('description = ?'); values.push(description); }
-  if (pricing_type !== undefined) { updates.push('pricing_type = ?'); values.push(pricing_type); }
-  if (price !== undefined) { updates.push('price = ?'); values.push(price); }
-  if (endpoint_url !== undefined) { updates.push('endpoint_url = ?'); values.push(endpoint_url || null); }
-  if (agent_type !== undefined) { updates.push('agent_type = ?'); values.push(agent_type); }
-  if (llm_provider !== undefined) { updates.push('llm_provider = ?'); values.push(llm_provider); }
-  if (llm_model !== undefined) { updates.push('llm_model = ?'); values.push(llm_model || null); }
-  if (llm_api_key !== undefined) { updates.push('llm_api_key = ?'); values.push(llm_api_key || null); }
-  if (llm_base_url !== undefined) { updates.push('llm_base_url = ?'); values.push(llm_base_url || null); }
-  if (system_prompt !== undefined) { updates.push('system_prompt = ?'); values.push(system_prompt || null); }
-  if (temperature !== undefined) { updates.push('temperature = ?'); values.push(temperature); }
-  if (max_tokens !== undefined) { updates.push('max_tokens = ?'); values.push(max_tokens); }
-  if (flow_config !== undefined) { updates.push('flow_config = ?'); values.push(JSON.stringify(flow_config)); }
-  if (auto_execute !== undefined) { updates.push('auto_execute = ?'); values.push(auto_execute ? 1 : 0); }
-  if (status !== undefined) { updates.push('status = ?'); values.push(status); }
+  if (name !== undefined) { updates.push(`name = $${updates.length + 1}`); values.push(name); }
+  if (description !== undefined) { updates.push(`description = $${updates.length + 1}`); values.push(description); }
+  if (pricing_type !== undefined) { updates.push(`pricing_type = $${updates.length + 1}`); values.push(pricing_type); }
+  if (price !== undefined) { updates.push(`price = $${updates.length + 1}`); values.push(price); }
+  if (endpoint_url !== undefined) { updates.push(`endpoint_url = $${updates.length + 1}`); values.push(endpoint_url || null); }
+  if (agent_type !== undefined) { updates.push(`agent_type = $${updates.length + 1}`); values.push(agent_type); }
+  if (llm_provider !== undefined) { updates.push(`llm_provider = $${updates.length + 1}`); values.push(llm_provider); }
+  if (llm_model !== undefined) { updates.push(`llm_model = $${updates.length + 1}`); values.push(llm_model || null); }
+  if (llm_api_key !== undefined) { updates.push(`llm_api_key = $${updates.length + 1}`); values.push(llm_api_key || null); }
+  if (llm_base_url !== undefined) { updates.push(`llm_base_url = $${updates.length + 1}`); values.push(llm_base_url || null); }
+  if (system_prompt !== undefined) { updates.push(`system_prompt = $${updates.length + 1}`); values.push(system_prompt || null); }
+  if (temperature !== undefined) { updates.push(`temperature = $${updates.length + 1}`); values.push(temperature); }
+  if (max_tokens !== undefined) { updates.push(`max_tokens = $${updates.length + 1}`); values.push(max_tokens); }
+  if (flow_config !== undefined) { updates.push(`flow_config = $${updates.length + 1}`); values.push(JSON.stringify(flow_config)); }
+  if (auto_execute !== undefined) { updates.push(`auto_execute = $${updates.length + 1}`); values.push(!!auto_execute); }
+  if (status !== undefined) { updates.push(`status = $${updates.length + 1}`); values.push(status); }
 
-  updates.push('updated_at = datetime(\'now\')');
+  updates.push('updated_at = NOW()');
   values.push(agent.id);
 
-  db.prepare(`UPDATE agents SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  await run(`UPDATE agents SET ${updates.join(', ')} WHERE id = $${values.length}`, values);
 
   // Update skills if provided
   if (body.skills !== undefined) {
     // Delete existing skills
-    db.prepare('DELETE FROM agent_skills WHERE agent_id = ?').run(agent.id);
+    await run('DELETE FROM agent_skills WHERE agent_id = $1', [agent.id]);
 
     // Insert new skills
     if (Array.isArray(body.skills)) {
       const { v4: uuid } = await import('uuid');
-      const insertSkill = db.prepare(`
-        INSERT INTO agent_skills (id, agent_id, name, description, input_types, output_types)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
       for (const skill of body.skills) {
-        insertSkill.run(
+        await run(`
+          INSERT INTO agent_skills (id, agent_id, name, description, input_types, output_types)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [
           uuid(), agent.id, skill.name, skill.description || '',
           JSON.stringify(skill.input || []),
           JSON.stringify(skill.output || []),
-        );
+        ]);
       }
     }
   }
@@ -165,8 +163,8 @@ export async function DELETE(
   const user = await getSession();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const db = getDb();
-  const agent = db.prepare('SELECT * FROM agents WHERE id = ? OR identity = ?').get(id, id) as any;
+  await ensureSchema();
+  const agent = await queryOne('SELECT * FROM agents WHERE id = $1 OR identity = $1', [id]) as any;
 
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
@@ -178,10 +176,10 @@ export async function DELETE(
   }
 
   // Check for active works (can't delete if work is in progress)
-  const activeWorks = db.prepare(`
+  const activeWorks = await queryOne(`
     SELECT COUNT(*) as c FROM works
-    WHERE agent_id = ? AND status IN ('CREATED', 'ACCEPTED', 'WORKING', 'INPUT_REQUIRED', 'QUALITY_CHECK')
-  `).get(agent.id) as any;
+    WHERE agent_id = $1 AND status IN ('CREATED', 'ACCEPTED', 'WORKING', 'INPUT_REQUIRED', 'QUALITY_CHECK')
+  `, [agent.id]) as any;
 
   if (activeWorks.c > 0) {
     return NextResponse.json({
@@ -190,36 +188,40 @@ export async function DELETE(
   }
 
   // Clean up ALL related data before deleting the agent in a transaction
-  const deleteAll = db.transaction(() => {
+  await run('BEGIN');
+  try {
     // 1. Delete work-related data (events, outputs, inputs) for this agent's works
-    const workIds = db.prepare('SELECT id FROM works WHERE agent_id = ?').all(agent.id).map((w: any) => w.id);
+    const workIds = (await queryAll('SELECT id FROM works WHERE agent_id = $1', [agent.id])).map((w: any) => w.id);
     if (workIds.length > 0) {
-      const placeholders = workIds.map(() => '?').join(',');
-      db.prepare(`DELETE FROM work_events WHERE work_id IN (${placeholders})`).run(...workIds);
-      db.prepare(`DELETE FROM work_outputs WHERE work_id IN (${placeholders})`).run(...workIds);
-      db.prepare(`DELETE FROM work_inputs WHERE work_id IN (${placeholders})`).run(...workIds);
+      const placeholders = workIds.map((_, i) => '$' + (i + 1)).join(',');
+      await run(`DELETE FROM work_events WHERE work_id IN (${placeholders})`, workIds);
+      await run(`DELETE FROM work_outputs WHERE work_id IN (${placeholders})`, workIds);
+      await run(`DELETE FROM work_inputs WHERE work_id IN (${placeholders})`, workIds);
     }
 
     // 2. Delete payments, ratings, reviews that reference this agent
-    db.prepare('DELETE FROM payments WHERE payee_agent_id = ?').run(agent.id);
-    db.prepare('DELETE FROM ratings WHERE agent_id = ?').run(agent.id);
-    db.prepare('DELETE FROM reviews WHERE agent_id = ?').run(agent.id);
+    await run('DELETE FROM payments WHERE payee_agent_id = $1', [agent.id]);
+    await run('DELETE FROM ratings WHERE agent_id = $1', [agent.id]);
+    await run('DELETE FROM reviews WHERE agent_id = $1', [agent.id]);
 
     // 3. Delete delegations (both as delegator and via child works)
-    db.prepare('DELETE FROM agent_delegations WHERE delegator_agent_id = ?').run(agent.id);
+    await run('DELETE FROM agent_delegations WHERE delegator_agent_id = $1', [agent.id]);
 
     // 4. Delete works (now safe — no child records left)
-    db.prepare('DELETE FROM works WHERE agent_id = ?').run(agent.id);
+    await run('DELETE FROM works WHERE agent_id = $1', [agent.id]);
 
     // 5. Delete agent metadata
-    db.prepare('DELETE FROM agent_reputation WHERE agent_id = ?').run(agent.id);
-    db.prepare('DELETE FROM agent_skills WHERE agent_id = ?').run(agent.id);
+    await run('DELETE FROM agent_reputation WHERE agent_id = $1', [agent.id]);
+    await run('DELETE FROM agent_skills WHERE agent_id = $1', [agent.id]);
 
     // 6. Finally delete the agent
-    db.prepare('DELETE FROM agents WHERE id = ?').run(agent.id);
-  });
+    await run('DELETE FROM agents WHERE id = $1', [agent.id]);
 
-  deleteAll();
+    await run('COMMIT');
+  } catch (e) {
+    await run('ROLLBACK');
+    throw e;
+  }
 
   return NextResponse.json({ success: true });
 }

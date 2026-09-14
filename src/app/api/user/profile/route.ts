@@ -1,45 +1,45 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne, queryAll } from '@/lib/db';
 
 export async function GET() {
   const user = await getSession();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const db = getDb();
+  await ensureSchema();
 
   // Full user info
-  const fullUser = db.prepare('SELECT id, email, name, role, created_at FROM users WHERE id = ?').get(user.id);
+  const fullUser = await queryOne('SELECT id, email, name, role, created_at FROM users WHERE id = $1', [user.id]);
 
   // User's agents (if provider)
-  const agents = db.prepare(`
+  const agents = await queryAll(`
     SELECT a.*, ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate
     FROM agents a
     LEFT JOIN agent_reputation ar ON a.id = ar.agent_id
-    WHERE a.owner_id = ?
+    WHERE a.owner_id = $1
     ORDER BY a.created_at DESC
-  `).all(user.id);
+  `, [user.id]);
 
   // User's works (as requester)
-  const works = db.prepare(`
+  const works = await queryAll(`
     SELECT w.*, a.name as agent_name, a.identity as agent_identity
     FROM works w
     LEFT JOIN agents a ON w.agent_id = a.id
-    WHERE w.requester_id = ?
+    WHERE w.requester_id = $1
     ORDER BY w.created_at DESC
     LIMIT 20
-  `).all(user.id);
+  `, [user.id]);
 
   // User's reviews given
-  const reviews = db.prepare(`
+  const reviews = await queryAll(`
     SELECT r.*, a.name as agent_name, a.identity as agent_identity, w.work_number
     FROM reviews r
     LEFT JOIN agents a ON r.agent_id = a.id
     LEFT JOIN works w ON r.work_id = w.id
-    WHERE r.rater_id = ?
+    WHERE r.rater_id = $1
     ORDER BY r.created_at DESC
     LIMIT 10
-  `).all(user.id);
+  `, [user.id]);
 
   // Stats
   const stats = {

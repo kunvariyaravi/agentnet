@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne, queryAll } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
 export async function GET(
@@ -7,9 +7,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  await ensureSchema();
 
-  const work = db.prepare(`
+  const work = await queryOne(`
     SELECT w.id, w.work_number, w.requester_id, w.agent_id, w.title, w.description,
       w.status, w.price, w.currency, w.payment_status, w.parent_work_id,
       w.created_at, w.started_at, w.completed_at, w.updated_at,
@@ -18,8 +18,8 @@ export async function GET(
     FROM works w
     LEFT JOIN agents a ON w.agent_id = a.id
     LEFT JOIN users u ON w.requester_id = u.id
-    WHERE w.id = ? OR w.work_number = ?
-  `).get(id, id) as any;
+    WHERE w.id = $1 OR w.work_number = $1
+  `, [id]) as any;
 
   if (!work) {
     return NextResponse.json({ error: 'Work not found' }, { status: 404 });
@@ -35,28 +35,28 @@ export async function GET(
   const isAdmin = session.role === 'admin';
 
   // Check if user owns the agent
-  const agentOwner = db.prepare('SELECT owner_id FROM agents WHERE id = ?').get(work.agent_id) as any;
+  const agentOwner = await queryOne('SELECT owner_id FROM agents WHERE id = $1', [work.agent_id]) as any;
   const isAgentOwner = agentOwner && session.id === agentOwner.owner_id;
 
   if (!isOwner && !isAdmin && !isAgentOwner) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const events = db.prepare('SELECT id, work_id, status, message, created_at FROM work_events WHERE work_id = ? ORDER BY created_at ASC').all(work.id);
-  const inputs = db.prepare('SELECT id, work_id, file_name, file_url, file_type, file_size, created_at FROM work_inputs WHERE work_id = ?').all(work.id);
-  const outputs = db.prepare('SELECT id, work_id, file_name, file_url, file_type, file_size, artifact_type, created_at FROM work_outputs WHERE work_id = ?').all(work.id);
-  const rating = db.prepare('SELECT id, work_id, score, quality, reliability, speed, value, created_at FROM ratings WHERE work_id = ?').get(work.id);
-  const review = db.prepare('SELECT id, work_id, title, content, created_at FROM reviews WHERE work_id = ?').get(work.id);
+  const events = await queryAll('SELECT id, work_id, status, message, created_at FROM work_events WHERE work_id = $1 ORDER BY created_at ASC', [work.id]);
+  const inputs = await queryAll('SELECT id, work_id, file_name, file_url, file_type, file_size, created_at FROM work_inputs WHERE work_id = $1', [work.id]);
+  const outputs = await queryAll('SELECT id, work_id, file_name, file_url, file_type, file_size, artifact_type, created_at FROM work_outputs WHERE work_id = $1', [work.id]);
+  const rating = await queryOne('SELECT id, work_id, score, quality, reliability, speed, value, created_at FROM ratings WHERE work_id = $1', [work.id]);
+  const review = await queryOne('SELECT id, work_id, title, content, created_at FROM reviews WHERE work_id = $1', [work.id]);
 
   // Get child works (delegations)
-  const childWorks = db.prepare(`
+  const childWorks = await queryAll(`
     SELECT w.id, w.work_number, w.title, w.status, w.price, w.created_at,
       a.name as agent_name, a.identity as agent_identity
     FROM works w
     LEFT JOIN agents a ON w.agent_id = a.id
-    WHERE w.parent_work_id = ?
+    WHERE w.parent_work_id = $1
     ORDER BY w.created_at ASC
-  `).all(work.id);
+  `, [work.id]);
 
   return NextResponse.json({ work, events, inputs, outputs, rating, review, childWorks });
 }

@@ -1,41 +1,51 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { Pool, QueryResult, QueryResultRow } from 'pg';
 
-const DB_PATH = path.join(process.cwd(), 'agentnet.db');
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
 
-let _db: Database.Database | null = null;
-
-export function getDb(): Database.Database {
-  if (!_db) {
-    _db = new Database(DB_PATH);
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
-    initSchema(_db);
-    migrateSchema(_db);
-    seedIfEmpty(_db);
-  }
-  return _db;
+export async function query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<QueryResult<T>> {
+  return pool.query<T>(text, params);
 }
 
-function initSchema(db: Database.Database) {
-  db.exec(`
+export async function queryOne<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<T | null> {
+  const result = await pool.query<T>(text, params);
+  return result.rows[0] ?? null;
+}
+
+export async function queryAll<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<T[]> {
+  const result = await pool.query<T>(text, params);
+  return result.rows;
+}
+
+export async function run(text: string, params?: any[]): Promise<QueryResult> {
+  return pool.query(text, params);
+}
+
+let schemaInitialized = false;
+
+export async function ensureSchema(): Promise<void> {
+  if (schemaInitialized) return;
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       email TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       avatar_url TEXT,
       role TEXT DEFAULT 'user' CHECK(role IN ('user','admin','agent_owner')),
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       identity TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
       description TEXT,
-      owner_id TEXT REFERENCES users(id),
+      owner_id UUID REFERENCES users(id),
       avatar_url TEXT,
       status TEXT DEFAULT 'online' CHECK(status IN ('online','offline','busy','maintenance')),
       technology TEXT DEFAULT 'Private',
@@ -43,7 +53,7 @@ function initSchema(db: Database.Database) {
       price REAL DEFAULT 0,
       currency TEXT DEFAULT 'USD',
       avg_delivery_minutes INTEGER DEFAULT 5,
-      is_simulated INTEGER DEFAULT 0,
+      is_simulated BOOLEAN DEFAULT FALSE,
       endpoint_url TEXT,
       api_key TEXT,
       agent_type TEXT DEFAULT 'custom',
@@ -54,109 +64,109 @@ function initSchema(db: Database.Database) {
       system_prompt TEXT,
       temperature REAL DEFAULT 0.7,
       max_tokens INTEGER DEFAULT 4096,
-      flow_config TEXT DEFAULT '[]',
-      auto_execute INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      flow_config JSONB DEFAULT '[]'::jsonb,
+      auto_execute BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS agent_skills (
-      id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       description TEXT,
-      input_types TEXT DEFAULT '[]',
-      output_types TEXT DEFAULT '[]',
-      created_at TEXT DEFAULT (datetime('now'))
+      input_types JSONB DEFAULT '[]'::jsonb,
+      output_types JSONB DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS works (
-      id TEXT PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       work_number TEXT UNIQUE NOT NULL,
-      requester_id TEXT NOT NULL REFERENCES users(id),
-      agent_id TEXT NOT NULL REFERENCES agents(id),
+      requester_id UUID NOT NULL REFERENCES users(id),
+      agent_id UUID NOT NULL REFERENCES agents(id),
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       status TEXT DEFAULT 'CREATED' CHECK(status IN ('CREATED','ACCEPTED','WORKING','INPUT_REQUIRED','QUALITY_CHECK','COMPLETED','FAILED','CANCELLED','REJECTED')),
       price REAL DEFAULT 0,
       currency TEXT DEFAULT 'USD',
       payment_status TEXT DEFAULT 'pending' CHECK(payment_status IN ('pending','authorized','released','refunded','failed')),
-      parent_work_id TEXT REFERENCES works(id),
-      created_at TEXT DEFAULT (datetime('now')),
-      started_at TEXT,
-      completed_at TEXT,
-      updated_at TEXT DEFAULT (datetime('now'))
+      parent_work_id UUID REFERENCES works(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS work_inputs (
-      id TEXT PRIMARY KEY,
-      work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      work_id UUID NOT NULL REFERENCES works(id) ON DELETE CASCADE,
       file_name TEXT NOT NULL,
       file_url TEXT NOT NULL,
       file_type TEXT,
       file_size INTEGER,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS work_outputs (
-      id TEXT PRIMARY KEY,
-      work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      work_id UUID NOT NULL REFERENCES works(id) ON DELETE CASCADE,
       file_name TEXT NOT NULL,
       file_url TEXT NOT NULL,
       file_type TEXT,
       file_size INTEGER,
       artifact_type TEXT DEFAULT 'file',
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS work_events (
-      id TEXT PRIMARY KEY,
-      work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      work_id UUID NOT NULL REFERENCES works(id) ON DELETE CASCADE,
       status TEXT NOT NULL,
       message TEXT,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT DEFAULT (datetime('now'))
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS payments (
-      id TEXT PRIMARY KEY,
-      work_id TEXT NOT NULL REFERENCES works(id),
-      payer_id TEXT NOT NULL REFERENCES users(id),
-      payee_agent_id TEXT NOT NULL REFERENCES agents(id),
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      work_id UUID NOT NULL REFERENCES works(id),
+      payer_id UUID NOT NULL REFERENCES users(id),
+      payee_agent_id UUID NOT NULL REFERENCES agents(id),
       amount REAL NOT NULL,
       currency TEXT DEFAULT 'USD',
       status TEXT DEFAULT 'pending' CHECK(status IN ('pending','authorized','captured','released','refunded','failed')),
       provider TEXT DEFAULT 'simulated',
       provider_ref TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS ratings (
-      id TEXT PRIMARY KEY,
-      work_id TEXT UNIQUE NOT NULL REFERENCES works(id),
-      rater_id TEXT NOT NULL REFERENCES users(id),
-      agent_id TEXT NOT NULL REFERENCES agents(id),
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      work_id UUID UNIQUE NOT NULL REFERENCES works(id),
+      rater_id UUID NOT NULL REFERENCES users(id),
+      agent_id UUID NOT NULL REFERENCES agents(id),
       score INTEGER NOT NULL CHECK(score >= 1 AND score <= 5),
       quality INTEGER CHECK(quality >= 1 AND quality <= 5),
       reliability INTEGER CHECK(reliability >= 1 AND reliability <= 5),
       speed INTEGER CHECK(speed >= 1 AND speed <= 5),
       value INTEGER CHECK(value >= 1 AND value <= 5),
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS reviews (
-      id TEXT PRIMARY KEY,
-      work_id TEXT UNIQUE NOT NULL REFERENCES works(id),
-      rater_id TEXT NOT NULL REFERENCES users(id),
-      agent_id TEXT NOT NULL REFERENCES agents(id),
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      work_id UUID UNIQUE NOT NULL REFERENCES works(id),
+      rater_id UUID NOT NULL REFERENCES users(id),
+      agent_id UUID NOT NULL REFERENCES agents(id),
       title TEXT,
       content TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS agent_reputation (
-      agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+      agent_id UUID PRIMARY KEY REFERENCES agents(id),
       total_works INTEGER DEFAULT 0,
       completed_works INTEGER DEFAULT 0,
       failed_works INTEGER DEFAULT 0,
@@ -168,90 +178,62 @@ function initSchema(db: Database.Database) {
       avg_value REAL DEFAULT 0,
       success_rate REAL DEFAULT 0,
       repeat_hire_rate REAL DEFAULT 0,
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id),
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id),
       title TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
       role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
       content TEXT NOT NULL,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT DEFAULT (datetime('now'))
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS agent_delegations (
-      id TEXT PRIMARY KEY,
-      parent_work_id TEXT NOT NULL REFERENCES works(id),
-      child_work_id TEXT NOT NULL REFERENCES works(id),
-      delegator_agent_id TEXT REFERENCES agents(id),
-      created_at TEXT DEFAULT (datetime('now'))
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      parent_work_id UUID NOT NULL REFERENCES works(id),
+      child_work_id UUID NOT NULL REFERENCES works(id),
+      delegator_agent_id UUID REFERENCES agents(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS notifications (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id),
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id),
       type TEXT NOT NULL,
       title TEXT NOT NULL,
       content TEXT,
-      read INTEGER DEFAULT 0,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT DEFAULT (datetime('now'))
+      read BOOLEAN DEFAULT FALSE,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  await seedIfEmpty();
+  schemaInitialized = true;
 }
 
-// Add new columns to existing tables that were created before the new schema
-function migrateSchema(db: Database.Database) {
-  const agentCols = db.prepare('PRAGMA table_info(agents)').all() as { name: string }[];
-  const colNames = new Set(agentCols.map(c => c.name));
+async function seedIfEmpty(): Promise<void> {
+  const result = await pool.query<{ c: number }>('SELECT COUNT(*)::int as c FROM users');
+  if (result.rows[0].c > 0) return;
 
-  const newAgentCols: [string, string][] = [
-    ['agent_type', 'TEXT DEFAULT \'custom\''],
-    ['llm_provider', 'TEXT DEFAULT \'nvidia\''],
-    ['llm_model', 'TEXT'],
-    ['llm_api_key', 'TEXT'],
-    ['llm_base_url', 'TEXT'],
-    ['system_prompt', 'TEXT'],
-    ['temperature', 'REAL DEFAULT 0.7'],
-    ['max_tokens', 'INTEGER DEFAULT 4096'],
-    ['flow_config', 'TEXT DEFAULT \'[]\''],
-    ['auto_execute', 'INTEGER DEFAULT 1'],
-  ];
-
-  for (const [name, type] of newAgentCols) {
-    if (!colNames.has(name)) {
-      try {
-        db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
-      } catch {
-        // Column already exists — safe to ignore
-      }
-    }
-  }
-}
-
-function seedIfEmpty(db: Database.Database) {
-  const count = db.prepare('SELECT COUNT(*) as c FROM users').get() as any;
-  if (count.c > 0) return;
-
-  const { v4: uuid } = require('uuid');
-
-  // Create initial admin user with a random password
   const bcrypt = require('bcryptjs');
   const crypto = require('crypto');
   const adminPassword = crypto.randomBytes(16).toString('hex');
   const hash = bcrypt.hashSync(adminPassword, 12);
 
-  db.prepare(`INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)`).run(
-    uuid(), 'admin@agentnet.ai', 'Admin', hash, 'admin'
+  await pool.query(
+    'INSERT INTO users (email, name, password_hash, role) VALUES ($1, $2, $3, $4)',
+    ['admin@agentnet.ai', 'Admin', hash, 'admin']
   );
 
   console.log('Database seeded with admin user');
@@ -259,4 +241,4 @@ function seedIfEmpty(db: Database.Database) {
   console.log('Save this password — it will not be shown again.');
 }
 
-export default getDb;
+export default pool;

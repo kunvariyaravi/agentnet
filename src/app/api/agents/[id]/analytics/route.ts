@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAgentAnalytics } from '@/lib/features';
 import { getSession } from '@/lib/auth';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne } from '@/lib/db';
 
 export async function GET(
   request: Request,
@@ -14,10 +14,10 @@ export async function GET(
     }
 
     const { id } = await params;
-    const db = getDb();
+    await ensureSchema();
 
     // Verify the user owns this agent or is admin
-    const agent = db.prepare('SELECT owner_id FROM agents WHERE id = ?').get(id) as any;
+    const agent = await queryOne('SELECT owner_id FROM agents WHERE id = $1', [id]) as any;
     if (!agent) {
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     }

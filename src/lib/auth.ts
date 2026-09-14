@@ -1,8 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 import bcrypt from 'bcryptjs';
-import { getDb } from './db';
-import { v4 as uuid } from 'uuid';
+import { queryOne, run, ensureSchema } from './db';
 import { randomBytes } from 'crypto';
 
 if (!process.env.JWT_SECRET) {
@@ -48,8 +47,11 @@ export async function requireSession(): Promise<SessionUser> {
 }
 
 export async function loginUser(email: string, password: string): Promise<SessionUser | null> {
-  const db = getDb();
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+  await ensureSchema();
+  const user = await queryOne<{ id: string; email: string; name: string; role: string; password_hash: string }>(
+    'SELECT id, email, name, role, password_hash FROM users WHERE email = $1',
+    [email]
+  );
   if (!user) return null;
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) return null;
@@ -57,11 +59,13 @@ export async function loginUser(email: string, password: string): Promise<Sessio
 }
 
 export async function createUser(email: string, password: string, name: string): Promise<SessionUser> {
-  const db = getDb();
-  const id = uuid();
+  await ensureSchema();
   const hash = await bcrypt.hash(password, 12);
-  db.prepare('INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)').run(id, email, name, hash);
-  return { id, email, name, role: 'user' };
+  const result = await queryOne<{ id: string }>(
+    'INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id',
+    [email, name, hash]
+  );
+  return { id: result!.id, email, name, role: 'user' };
 }
 
 export function generateWorkNumber(): string {

@@ -1,8 +1,9 @@
 // Worker module: executes agent flows, supports sub-agent delegation
-import { getDb } from './db';
+import { queryOne, queryAll, run, ensureSchema } from './db';
 import { v4 as uuid } from 'uuid';
 import { callLLM, LLMConfig } from './llm';
 import { FlowStep, DEFAULT_FLOW } from './agent-templates';
+import { generateWorkNumber } from './auth';
 
 // ── Template variable resolution ──
 // Supports: {{work.description}}, {{work.title}}, {{stepId.output}}
@@ -51,15 +52,16 @@ function slugify(s: string): string {
 
 // ── Main entry point ──
 export async function processAgentWork(workId: string, isChild = false): Promise<string> {
-  const db = getDb();
-  const work = db.prepare(`
-    SELECT w.*, a.name as agent_name, a.identity as agent_identity,
+  await ensureSchema();
+  const work = await queryOne(`
+    SELECT w.id, w.agent_id, w.requester_id, w.title, w.description, w.status,
+      a.name as agent_name, a.identity as agent_identity,
       a.agent_type, a.llm_provider, a.llm_model, a.llm_api_key, a.llm_base_url,
       a.system_prompt, a.temperature, a.max_tokens, a.flow_config, a.auto_execute
     FROM works w
     LEFT JOIN agents a ON w.agent_id = a.id
-    WHERE w.id = ?
-  `).get(workId) as any;
+    WHERE w.id = $1
+  `, [workId]);
 
   if (!work) return '';
   if (work.status !== 'WORKING') return '';
@@ -68,7 +70,7 @@ export async function processAgentWork(workId: string, isChild = false): Promise
     // Parse flow config
     let flow: FlowStep[] = [];
     try {
-      flow = JSON.parse(work.flow_config || '[]');
+      flow = typeof work.flow_config === 'string' ? JSON.parse(work.flow_config || '[]') : (work.flow_config || []);
     } catch {
       flow = [];
     }
@@ -108,7 +110,7 @@ export async function processAgentWork(workId: string, isChild = false): Promise
       } else if (step.type === 'delegate') {
         await executeDelegateStep(step, context, work, workId);
       } else if (step.type === 'output') {
-        const result = executeOutputStep(step, context, workId);
+        const result = await executeOutputStep(step, context, workId);
         if (result) finalContent = result;
       }
     }
@@ -119,17 +121,17 @@ export async function processAgentWork(workId: string, isChild = false): Promise
       if (lastOutput) {
         finalContent = lastOutput;
         const slug = slugify(work.title);
-        saveOutput(db, workId, `${slug}.md`, lastOutput);
+        await saveOutput(workId, `${slug}.md`, lastOutput);
       }
     }
 
     // Mark complete
-    completeWork(db, workId, work.agent_id);
+    await completeWork(workId, work.agent_id);
     return finalContent;
 
   } catch (error: any) {
     console.error(`Worker error for ${workId}:`, error);
-    failWork(db, workId, work.agent_id, error.message || 'Work failed');
+    await failWork(workId, work.agent_id, error.message || 'Work failed');
     return '';
   }
 }
@@ -143,7 +145,6 @@ async function executeLLMStep(
   agentSystemPrompt: string,
   workId: string,
 ): Promise<void> {
-  const db = getDb();
   const systemPrompt = step.config.systemPrompt || agentSystemPrompt;
   const userPrompt = resolveTemplate(step.config.userPromptTemplate || '{{work.description}}', context);
 
@@ -154,14 +155,14 @@ async function executeLLMStep(
     maxTokens: step.config.maxTokens ?? llmConfig.maxTokens,
   };
 
-  logEvent(db, workId, 'WORKING', `Executing: ${step.name}`);
+  await logEvent(workId, 'WORKING', `Executing: ${step.name}`);
 
   const output = await callLLM(stepConfig, systemPrompt, userPrompt);
   context.step[step.id] = output;
   // Also store as {stepId: {output: ...}} so {{stepId.output}} templates resolve correctly
   context[step.id] = { output };
 
-  logEvent(db, workId, 'WORKING', `Completed: ${step.name} (${output.length} chars)`, {
+  await logEvent(workId, 'WORKING', `Completed: ${step.name} (${output.length} chars)`, {
     step: step.id,
     outputLength: output.length,
   });
@@ -173,26 +174,25 @@ async function executeDelegateStep(
   work: any,
   workId: string,
 ): Promise<void> {
-  const db = getDb();
   const agentIdentity = resolveTemplate(step.config.agentIdentity || '', context);
   const taskDescription = resolveTemplate(step.config.taskTemplate || '{{work.description}}', context);
 
-  const targetAgent = db.prepare('SELECT * FROM agents WHERE identity = ?').get(agentIdentity) as any;
+  const targetAgent = await queryOne<{ id: string }>('SELECT id FROM agents WHERE identity = $1', [agentIdentity]);
 
   if (!targetAgent) {
     context.step[step.id] = `[Delegation failed: agent "${agentIdentity}" not found]`;
-    logEvent(db, workId, 'WORKING', `Delegation failed: agent "${agentIdentity}" not found`);
+    await logEvent(workId, 'WORKING', `Delegation failed: agent "${agentIdentity}" not found`);
     return;
   }
 
   // Create child work order
   const childWorkId = uuid();
-  const childWorkNumber = `DELEG-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const childWorkNumber = generateWorkNumber();
 
-  db.prepare(`
+  await run(`
     INSERT INTO works (id, work_number, requester_id, agent_id, title, description, status, parent_work_id, created_at, started_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'WORKING', ?, datetime('now'), datetime('now'), datetime('now'))
-  `).run(
+    VALUES ($1, $2, $3, $4, $5, $6, 'WORKING', $7, NOW(), NOW(), NOW())
+  `, [
     childWorkId,
     childWorkNumber,
     work.requester_id,
@@ -200,15 +200,15 @@ async function executeDelegateStep(
     `[Delegated] ${step.name}`,
     taskDescription,
     workId,
-  );
+  ]);
 
   // Record delegation
-  db.prepare(`
+  await run(`
     INSERT INTO agent_delegations (id, parent_work_id, child_work_id, delegator_agent_id)
-    VALUES (?, ?, ?, ?)
-  `).run(uuid(), workId, childWorkId, work.agent_id);
+    VALUES ($1, $2, $3, $4)
+  `, [uuid(), workId, childWorkId, work.agent_id]);
 
-  logEvent(db, workId, 'WORKING', `Delegated to ${agentIdentity}: ${step.name}`, {
+  await logEvent(workId, 'WORKING', `Delegated to ${agentIdentity}: ${step.name}`, {
     step: step.id,
     childWorkId,
     agentIdentity,
@@ -219,18 +219,17 @@ async function executeDelegateStep(
   context.step[step.id] = childOutput;
   context[step.id] = { output: childOutput };
 
-  logEvent(db, workId, 'WORKING', `Delegation completed: ${step.name} (${childOutput.length} chars)`, {
+  await logEvent(workId, 'WORKING', `Delegation completed: ${step.name} (${childOutput.length} chars)`, {
     step: step.id,
     childWorkId,
   });
 }
 
-function executeOutputStep(
+async function executeOutputStep(
   step: FlowStep,
   context: Record<string, any>,
   workId: string,
-): string | null {
-  const db = getDb();
+): Promise<string | null> {
   const content = resolveTemplate(step.config.contentTemplate || '{{work.description}}', context);
   let filename = resolveTemplate(step.config.filenameTemplate || 'result.md', context);
   const outputType = step.config.outputType || 'markdown';
@@ -242,7 +241,7 @@ function executeOutputStep(
 
   // Skip saving if content is empty
   if (!content || content.trim() === '') {
-    logEvent(db, workId, 'WORKING', `Output step skipped (empty content for: ${filename})`, {
+    await logEvent(workId, 'WORKING', `Output step skipped (empty content for: ${filename})`, {
       step: step.id,
       filename,
       outputType,
@@ -250,9 +249,9 @@ function executeOutputStep(
     return null;
   }
 
-  saveOutput(db, workId, filename, content);
+  await saveOutput(workId, filename, content);
 
-  logEvent(db, workId, 'WORKING', `Output saved: ${filename} (${content.length} chars)`, {
+  await logEvent(workId, 'WORKING', `Output saved: ${filename} (${content.length} chars)`, {
     step: step.id,
     filename,
     outputType,
@@ -263,81 +262,76 @@ function executeOutputStep(
 
 // ── Helpers ──
 
-function saveOutput(db: any, workId: string, filename: string, content: string): void {
+async function saveOutput(workId: string, filename: string, content: string): Promise<void> {
   // Don't save empty content — creates confusing NULL records
   if (!content || content.trim() === '') return;
 
   // Save as file artifact (with data URL for download)
-  db.prepare(`
+  await run(`
     INSERT INTO work_outputs (id, work_id, file_name, file_url, file_type, artifact_type)
-    VALUES (?, ?, ?, ?, ?, 'file')
-  `).run(
+    VALUES ($1, $2, $3, $4, $5, 'file')
+  `, [
     uuid(),
     workId,
     filename,
     `data:text/markdown;charset=utf-8,${encodeURIComponent(content)}`,
     'text/markdown',
-  );
+  ]);
 
   // Save as content artifact (raw content for UI display)
-  db.prepare(`
+  await run(`
     INSERT INTO work_outputs (id, work_id, file_name, file_url, file_type, artifact_type)
-    VALUES (?, ?, ?, ?, ?, 'content')
-  `).run(uuid(), workId, filename, content, 'text/markdown');
+    VALUES ($1, $2, $3, $4, $5, 'content')
+  `, [uuid(), workId, filename, content, 'text/markdown']);
 }
 
-function logEvent(db: any, workId: string, status: string, message: string, metadata?: any): void {
-  db.prepare(`
+async function logEvent(workId: string, status: string, message: string, metadata?: any): Promise<void> {
+  await run(`
     INSERT INTO work_events (id, work_id, status, message, metadata)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(uuid(), workId, status, message, JSON.stringify(metadata || {}));
+    VALUES ($1, $2, $3, $4, $5)
+  `, [uuid(), workId, status, message, JSON.stringify(metadata || {})]);
 }
 
-function completeWork(db: any, workId: string, agentId: string): void {
-  const now = new Date().toISOString();
-  db.prepare(`UPDATE works SET status = 'COMPLETED', completed_at = ?, updated_at = ? WHERE id = ?`)
-    .run(now, now, workId);
-  logEvent(db, workId, 'COMPLETED', 'Work completed successfully');
-  db.prepare(`UPDATE payments SET status = 'released' WHERE work_id = ? AND status = 'authorized'`)
-    .run(workId);
-  updateReputation(db, agentId);
+async function completeWork(workId: string, agentId: string): Promise<void> {
+  await run(`UPDATE works SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW() WHERE id = $1`, [workId]);
+  await logEvent(workId, 'COMPLETED', 'Work completed successfully');
+  await run(`UPDATE payments SET status = 'released' WHERE work_id = $1 AND status = 'authorized'`, [workId]);
+  await updateReputation(agentId);
 }
 
-function failWork(db: any, workId: string, agentId: string, errorMessage: string): void {
-  const now = new Date().toISOString();
-  db.prepare(`UPDATE works SET status = 'FAILED', completed_at = ?, updated_at = ? WHERE id = ?`)
-    .run(now, now, workId);
-  logEvent(db, workId, 'FAILED', errorMessage);
-  updateReputation(db, agentId);
+async function failWork(workId: string, agentId: string, errorMessage: string): Promise<void> {
+  await run(`UPDATE works SET status = 'FAILED', completed_at = NOW(), updated_at = NOW() WHERE id = $1`, [workId]);
+  await logEvent(workId, 'FAILED', errorMessage);
+  await updateReputation(agentId);
 }
 
-function updateReputation(db: any, agentId: string): void {
-  const stats = db.prepare(`
-    SELECT COUNT(*) as total,
-      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
-      SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed
-    FROM works WHERE agent_id = ?
-  `).get(agentId);
+async function updateReputation(agentId: string): Promise<void> {
+  const stats = await queryOne(`
+    SELECT COUNT(*)::int as total,
+      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END)::int as completed,
+      SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END)::int as failed
+    FROM works WHERE agent_id = $1
+  `, [agentId]);
 
-  const ratingStats = db.prepare(`
-    SELECT COUNT(*) as rated, AVG(score) as avg_rating
-    FROM ratings WHERE agent_id = ?
-  `).get(agentId);
+  const ratingStats = await queryOne(`
+    SELECT COUNT(*)::int as rated, AVG(score) as avg_rating
+    FROM ratings WHERE agent_id = $1
+  `, [agentId]);
 
-  const successRate = stats.total > 0 ? stats.completed / stats.total : 0;
+  const successRate = (stats?.total ?? 0) > 0 ? (stats?.completed ?? 0) / (stats?.total ?? 1) : 0;
 
-  db.prepare(`
+  await run(`
     UPDATE agent_reputation SET
-      total_works = ?, completed_works = ?, failed_works = ?,
-      total_rated = ?, avg_rating = ?, success_rate = ?, updated_at = datetime('now')
-    WHERE agent_id = ?
-  `).run(
-    stats.total,
-    stats.completed,
-    stats.failed,
-    ratingStats.rated,
-    ratingStats.avg_rating || 0,
+      total_works = $1, completed_works = $2, failed_works = $3,
+      total_rated = $4, avg_rating = $5, success_rate = $6, updated_at = NOW()
+    WHERE agent_id = $7
+  `, [
+    stats?.total ?? 0,
+    stats?.completed ?? 0,
+    stats?.failed ?? 0,
+    ratingStats?.rated ?? 0,
+    ratingStats?.avg_rating ?? 0,
     successRate,
     agentId,
-  );
+  ]);
 }

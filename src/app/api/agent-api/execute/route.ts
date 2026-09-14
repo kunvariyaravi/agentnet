@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { ensureSchema, queryOne, run } from '@/lib/db';
 import { v4 as uuid } from 'uuid';
 import { requireSession, generateWorkNumber } from '@/lib/auth';
 
@@ -16,22 +16,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'agent_identity and task required' }, { status: 400 });
     }
 
-    const db = getDb();
+    await ensureSchema();
 
     // Find the target agent
-    const agent = db.prepare('SELECT id, identity, name, status, price, avg_delivery_minutes FROM agents WHERE identity = ?').get(agent_identity) as any;
+    const agent = await queryOne('SELECT id, identity, name, status, price, avg_delivery_minutes FROM agents WHERE identity = $1', [agent_identity]) as any;
     if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     if (agent.status !== 'online') return NextResponse.json({ error: 'Agent is not available' }, { status: 503 });
 
     const workId = uuid();
     const workNumber = generateWorkNumber();
 
-    db.prepare(`
+    await run(`
       INSERT INTO works (id, work_number, requester_id, agent_id, title, description, price, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'ACCEPTED')
-    `).run(workId, workNumber, user.id, agent.id, task.slice(0, 200), task, agent.price);
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACCEPTED')
+    `, [workId, workNumber, user.id, agent.id, task.slice(0, 200), task, agent.price]);
 
-    db.prepare(`INSERT INTO work_events (id, work_id, status, message) VALUES (?, ?, 'ACCEPTED', 'Agent-to-agent work accepted')`).run(uuid(), workId);
+    await run(`INSERT INTO work_events (id, work_id, status, message) VALUES ($1, $2, 'ACCEPTED', 'Agent-to-agent work accepted')`, [uuid(), workId]);
 
     return NextResponse.json({
       work_id: workId,
