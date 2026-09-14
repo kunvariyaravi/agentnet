@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# database (SQLite — local only, not for production)
+*.db
+*.db-shm
+*.db-wal
+
+# workbuddy project metadata
+.workbuddy-ai/
+
+# temp/debug files
+chat_error.txt
+*.log
