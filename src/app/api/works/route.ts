@@ -30,7 +30,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Agent, title, and description required' }, { status: 400 });
   }
 
+  if (price !== undefined && (typeof price !== 'number' || price < 0 || price > 1_000_000)) {
+    return NextResponse.json({ error: 'Price must be a non-negative number' }, { status: 400 });
+  }
+
   const db = getDb();
+
+  // Verify agent exists and is online
+  const agent = db.prepare('SELECT id, name, identity, status, price FROM agents WHERE id = ?').get(agent_id) as any;
+  if (!agent) {
+    return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+  }
+  if (agent.status !== 'online') {
+    return NextResponse.json({ error: 'Agent is not available' }, { status: 403 });
+  }
   const id = uuid();
   const workNumber = generateWorkNumber();
 
@@ -49,10 +62,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Get agent info
-  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agent_id) as any;
-
   return NextResponse.json({ 
-    work: { id, work_number: workNumber, status: 'CREATED', title, description, price, agent_name: agent?.name, agent_identity: agent?.identity }
+    work: { id, work_number: workNumber, status: 'CREATED', title, description, price, agent_name: agent.name, agent_identity: agent.identity }
   }, { status: 201 });
 }

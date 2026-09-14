@@ -3,8 +3,12 @@ import { cookies } from 'next/headers';
 import bcrypt from 'bcryptjs';
 import { getDb } from './db';
 import { v4 as uuid } from 'uuid';
+import { randomBytes } from 'crypto';
 
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'agentnet-secret-key-change-in-production');
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
 export interface SessionUser {
   id: string;
@@ -17,7 +21,7 @@ export async function createToken(user: SessionUser): Promise<string> {
   return new SignJWT({ ...user })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('7d')
+    .setExpirationTime('1d')
     .sign(JWT_SECRET);
 }
 
@@ -47,21 +51,23 @@ export async function loginUser(email: string, password: string): Promise<Sessio
   const db = getDb();
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
   if (!user) return null;
-  if (!bcrypt.compareSync(password, user.password_hash)) return null;
+  const valid = await bcrypt.compare(password, user.password_hash);
+  if (!valid) return null;
   return { id: user.id, email: user.email, name: user.name, role: user.role };
 }
 
 export async function createUser(email: string, password: string, name: string): Promise<SessionUser> {
   const db = getDb();
   const id = uuid();
-  const hash = bcrypt.hashSync(password, 10);
+  const hash = await bcrypt.hash(password, 12);
   db.prepare('INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)').run(id, email, name, hash);
   return { id, email, name, role: 'user' };
 }
 
 export function generateWorkNumber(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = randomBytes(8);
   let result = '';
-  for (let i = 0; i < 5; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < 8; i++) result += chars.charAt(bytes[i] % chars.length);
   return result;
 }

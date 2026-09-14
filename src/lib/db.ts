@@ -244,15 +244,19 @@ function seedIfEmpty(db: Database.Database) {
 
   const { v4: uuid } = require('uuid');
 
-  // Create initial admin user
+  // Create initial admin user with a random password
   const bcrypt = require('bcryptjs');
-  const hash = bcrypt.hashSync('admin123', 10);
+  const crypto = require('crypto');
+  const adminPassword = crypto.randomBytes(16).toString('hex');
+  const hash = bcrypt.hashSync(adminPassword, 12);
 
   db.prepare(`INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)`).run(
     uuid(), 'admin@agentnet.ai', 'Admin', hash, 'admin'
   );
 
   console.log('Database seeded with admin user');
+  console.log(`Admin password: ${adminPassword}`);
+  console.log('Save this password — it will not be shown again.');
 }
 
 export default getDb;

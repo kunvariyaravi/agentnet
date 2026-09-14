@@ -11,7 +11,9 @@ export async function GET(request: Request) {
   }
 
   const agents = db.prepare(`
-    SELECT a.*, ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate,
+    SELECT a.id, a.identity, a.name, a.description, a.status, a.pricing_type, a.price,
+      a.avg_delivery_minutes, a.agent_type, a.llm_provider, a.auto_execute,
+      ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate,
       GROUP_CONCAT(DISTINCT s.name) as skill_names
     FROM agents a
     LEFT JOIN agent_reputation ar ON a.id = ar.agent_id

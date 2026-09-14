@@ -47,6 +47,7 @@ export async function GET(
 
   // Only return sensitive fields (API key) to the owner
   if (!user || (user.id !== agent.owner_id && user.role !== 'admin')) {
+    delete agent.api_key;
     delete agent.llm_api_key;
     delete agent.flow_config;
     delete agent.system_prompt;
@@ -188,35 +189,37 @@ export async function DELETE(
     }, { status: 400 });
   }
 
-  // Clean up ALL related data before deleting the agent
-  // Order matters: child tables first, then parent tables
+  // Clean up ALL related data before deleting the agent in a transaction
+  const deleteAll = db.transaction(() => {
+    // 1. Delete work-related data (events, outputs, inputs) for this agent's works
+    const workIds = db.prepare('SELECT id FROM works WHERE agent_id = ?').all(agent.id).map((w: any) => w.id);
+    if (workIds.length > 0) {
+      const placeholders = workIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM work_events WHERE work_id IN (${placeholders})`).run(...workIds);
+      db.prepare(`DELETE FROM work_outputs WHERE work_id IN (${placeholders})`).run(...workIds);
+      db.prepare(`DELETE FROM work_inputs WHERE work_id IN (${placeholders})`).run(...workIds);
+    }
 
-  // 1. Delete work-related data (events, outputs, inputs) for this agent's works
-  const workIds = db.prepare('SELECT id FROM works WHERE agent_id = ?').all(agent.id).map((w: any) => w.id);
-  if (workIds.length > 0) {
-    const placeholders = workIds.map(() => '?').join(',');
-    db.prepare(`DELETE FROM work_events WHERE work_id IN (${placeholders})`).run(...workIds);
-    db.prepare(`DELETE FROM work_outputs WHERE work_id IN (${placeholders})`).run(...workIds);
-    db.prepare(`DELETE FROM work_inputs WHERE work_id IN (${placeholders})`).run(...workIds);
-  }
+    // 2. Delete payments, ratings, reviews that reference this agent
+    db.prepare('DELETE FROM payments WHERE payee_agent_id = ?').run(agent.id);
+    db.prepare('DELETE FROM ratings WHERE agent_id = ?').run(agent.id);
+    db.prepare('DELETE FROM reviews WHERE agent_id = ?').run(agent.id);
 
-  // 2. Delete payments, ratings, reviews that reference this agent
-  db.prepare('DELETE FROM payments WHERE payee_agent_id = ?').run(agent.id);
-  db.prepare('DELETE FROM ratings WHERE agent_id = ?').run(agent.id);
-  db.prepare('DELETE FROM reviews WHERE agent_id = ?').run(agent.id);
+    // 3. Delete delegations (both as delegator and via child works)
+    db.prepare('DELETE FROM agent_delegations WHERE delegator_agent_id = ?').run(agent.id);
 
-  // 3. Delete delegations (both as delegator and via child works)
-  db.prepare('DELETE FROM agent_delegations WHERE delegator_agent_id = ?').run(agent.id);
+    // 4. Delete works (now safe — no child records left)
+    db.prepare('DELETE FROM works WHERE agent_id = ?').run(agent.id);
 
-  // 4. Delete works (now safe — no child records left)
-  db.prepare('DELETE FROM works WHERE agent_id = ?').run(agent.id);
+    // 5. Delete agent metadata
+    db.prepare('DELETE FROM agent_reputation WHERE agent_id = ?').run(agent.id);
+    db.prepare('DELETE FROM agent_skills WHERE agent_id = ?').run(agent.id);
 
-  // 5. Delete agent metadata
-  db.prepare('DELETE FROM agent_reputation WHERE agent_id = ?').run(agent.id);
-  db.prepare('DELETE FROM agent_skills WHERE agent_id = ?').run(agent.id);
+    // 6. Finally delete the agent
+    db.prepare('DELETE FROM agents WHERE id = ?').run(agent.id);
+  });
 
-  // 6. Finally delete the agent
-  db.prepare('DELETE FROM agents WHERE id = ?').run(agent.id);
+  deleteAll();
 
   return NextResponse.json({ success: true });
 }

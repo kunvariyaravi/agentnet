@@ -14,6 +14,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Work ID and score required' }, { status: 400 });
   }
 
+  const scoreNum = Number(score);
+  if (!Number.isInteger(scoreNum) || scoreNum < 1 || scoreNum > 5) {
+    return NextResponse.json({ error: 'Score must be an integer between 1 and 5' }, { status: 400 });
+  }
+
+  const validateRating = (val: any): number | null => {
+    const n = Number(val);
+    return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null;
+  };
+
   const db = getDb();
   const work = db.prepare('SELECT * FROM works WHERE id = ?').get(work_id) as any;
   if (!work) return NextResponse.json({ error: 'Work not found' }, { status: 404 });
@@ -26,7 +36,8 @@ export async function POST(request: Request) {
 
   const ratingId = uuid();
   db.prepare(`INSERT INTO ratings (id, work_id, rater_id, agent_id, score, quality, reliability, speed, value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    ratingId, work_id, user.id, work.agent_id, score, quality || null, reliability || null, speed || null, value || null
+    ratingId, work_id, user.id, work.agent_id, scoreNum,
+    validateRating(quality), validateRating(reliability), validateRating(speed), validateRating(value)
   );
 
   if (content) {

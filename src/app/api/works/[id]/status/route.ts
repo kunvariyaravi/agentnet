@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { v4 as uuid } from 'uuid';
 import { processAgentWork } from '@/lib/worker';
+import { getSession } from '@/lib/auth';
 
 // Agent-to-agent or system status updates
 export async function POST(
@@ -20,8 +21,13 @@ export async function POST(
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(work.agent_id) as any;
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
 
-  // For simulated agents, skip auth
-  if (!agent.is_simulated && agent.api_key && agent.api_key !== api_key) {
+  // Require either a valid session (owner or requester) or a valid API key
+  const session = await getSession();
+  const isOwner = session && (session.id === agent.owner_id || session.id === work.requester_id);
+  const isAdmin = session && session.role === 'admin';
+  const hasValidApiKey = api_key && agent.api_key && agent.api_key === api_key;
+
+  if (!isOwner && !isAdmin && !hasValidApiKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

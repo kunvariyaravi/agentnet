@@ -116,10 +116,9 @@ export async function POST(request: Request) {
         price: a.price, delivery: a.avg_delivery_minutes, skills: a.skill_names
       }))
     });
-  } catch (error: any) {
-    console.error('Chat API error:', error);
+  } catch {
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
@@ -135,15 +134,20 @@ export async function GET(request: Request) {
     const convId = searchParams.get('conversation_id');
 
     if (convId) {
-      const messages = db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(convId);
+      // Verify conversation ownership
+      const conv = db.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').get(convId, user.id);
+      if (!conv) {
+        return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
+      }
+      const messages = db.prepare('SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(convId);
       return NextResponse.json({ messages });
     }
 
     const conversations = db.prepare('SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 20').all(user.id);
     return NextResponse.json({ conversations });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
