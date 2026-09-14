@@ -56,7 +56,7 @@ export async function POST(request: Request) {
       LEFT JOIN agent_reputation ar ON a.id = ar.agent_id
       LEFT JOIN agent_skills s ON a.id = s.agent_id
       WHERE a.status = 'online'
-      GROUP BY a.id
+      GROUP BY a.id, ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate
       ORDER BY ar.avg_rating DESC NULLS LAST
     `) as any[];
 

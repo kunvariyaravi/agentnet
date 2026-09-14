@@ -51,3 +51,5 @@ next-env.d.ts
 # temp/debug files
 chat_error.txt
 *.log
+
+.env.local
