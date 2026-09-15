@@ -66,11 +66,21 @@ export default function EditAgentPage({ params }: { params: Promise<{ id: string
   const [skills, setSkills] = useState<{ name: string; description: string; input: string; output: string }[]>([]);
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/auth/me', { credentials: 'include' }).then(r => r.json()),
-      fetch('/api/agents/templates').then(r => r.json()),
-      fetch(`/api/agents/${id}`, { credentials: 'include' }).then(r => r.json()),
-    ]).then(([userRes, tplRes, agentRes]) => {
+    (async () => {
+      // Only 401 means logged out — transient 429/5xx must not kick the user to /login
+      let userRes: any;
+      try {
+        const meRes = await fetch('/api/auth/me', { credentials: 'include' });
+        if (meRes.status === 401) { router.push('/login'); return; }
+        if (!meRes.ok) return;
+        userRes = await meRes.json();
+      } catch {
+        return;
+      }
+      const [tplRes, agentRes] = await Promise.all([
+        fetch('/api/agents/templates').then(r => r.json()),
+        fetch(`/api/agents/${id}`, { credentials: 'include' }).then(r => r.json()),
+      ]);
       if (!userRes.user) { router.push('/login'); return; }
       setUser(userRes.user);
       setProviders(tplRes.providers || {});
@@ -120,19 +130,33 @@ export default function EditAgentPage({ params }: { params: Promise<{ id: string
       })) || [{ name: '', description: '', input: '', output: '' }]);
 
       setLoading(false);
-    });
+    })();
   }, [id, router]);
 
   const updateForm = (field: string, value: any) => setForm(f => ({ ...f, [field]: value }));
 
-  const onProviderChange = (provider: string) => {
-    const preset = providers[provider];
-    updateForm('llm_provider', provider);
-    if (preset) {
-      updateForm('llm_base_url', preset.baseUrl);
-      if (!form.llm_model) updateForm('llm_model', preset.defaultModel);
-    }
-  };
+   const onProviderChange = (provider: string) => {
+     const preset = providers[provider];
+     updateForm('llm_provider', provider);
+     if (preset) {
+       updateForm('llm_base_url', preset.baseUrl);
+       if (!form.llm_model) updateForm('llm_model', preset.defaultModel);
+     }
+   };
+
+   // One-click best image-generation model preset (NVIDIA NIM)
+   const useBestImageModel = () => {
+     updateForm('llm_provider', 'nvidia');
+     updateForm('llm_model', 'black-forest-labs/FLUX.1-dev');
+     updateForm('llm_base_url', 'https://integrate.api.nvidia.com/v1');
+     updateForm('system_prompt', `You are an expert image generation assistant for AgentNet. Your job is to create detailed, high-quality image prompts and visual concepts.
+For each request, produce:
+1. A detailed image prompt optimized for diffusion models (Flux, DALL-E, Stable Diffusion, Midjourney)
+2. Style, lighting, composition, and mood descriptions
+3. Negative prompts (what to avoid)
+4. 2-3 alternative variations
+Format as clean Markdown. Be specific and visual.`);
+   };
 
   // Flow step management
   const addFlowStep = (type: FlowStep['type']) => {

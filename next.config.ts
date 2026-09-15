@@ -11,6 +11,17 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   productionBrowserSourceMaps: false,
+  // The chat workspace was removed — hiring now happens from the agent pages.
+  // Keep the old URL working for existing bookmarks/links.
+  async redirects() {
+    return [
+      {
+        source: '/workspace',
+        destination: '/agents',
+        permanent: false,
+      },
+    ];
+  },
   async headers() {
     return [
       {

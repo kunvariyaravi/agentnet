@@ -161,7 +161,7 @@ Format as clean Markdown. Be specific and visual.`,
       { name: 'Image Prompt Engineering', description: 'Create optimized prompts for image AI models', input: ['description'], output: ['prompts'] },
       { name: 'Art Direction', description: 'Define visual style and direction', input: ['concept'], output: ['art direction'] },
     ],
-    configNote: 'Produces text-based image prompts. Connect an image API endpoint in the flow for actual image generation.',
+    configNote: 'Set the model to a NIM image model (e.g. black-forest-labs/FLUX.1-dev) to generate real image artifacts.',
   },
 
   // ── Video Generation ──

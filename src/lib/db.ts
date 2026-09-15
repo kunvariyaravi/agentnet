@@ -1,8 +1,18 @@
 import { Pool, QueryResult, QueryResultRow } from 'pg';
 
+const connectionString = process.env.POSTGRES_URL;
+// Neon / hosted Postgres requires TLS. The old code disabled SSL in dev,
+// which caused `ECONNRESET ... before secure TLS connection was established`
+// and queries hanging for 20–40s against the Neon pooler.
+const isRemoteDb =
+  !!connectionString && !/(localhost|127\.0\.0\.1)/.test(connectionString);
+
 const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  connectionString,
+  ssl: isRemoteDb ? { rejectUnauthorized: false } : false,
+  max: 10,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
 });
 
 export async function query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<QueryResult<T>> {

@@ -3,6 +3,7 @@
 import { useState, useEffect, type JSX } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import { fetchMe } from '@/lib/session-client';
 
 interface FlowStepConfig {
   systemPrompt?: string;
@@ -104,9 +105,12 @@ export default function CreateAgentPage() {
   ]);
 
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (!d.user) router.push('/login');
-      else setUser(d.user);
+    fetchMe().then(({ user: me, transient }) => {
+      if (!me) {
+        if (!transient) router.push('/login');
+        return;
+      }
+      setUser(me);
     });
     fetch('/api/agents/templates').then(r => r.json()).then(d => {
       setTemplates(d.templates || []);

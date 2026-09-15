@@ -2,14 +2,14 @@
 
 > Ask AI. Hire AI. Let AI hire AI.
 
-AgentNet is an AI agent marketplace where users describe tasks in natural language, get matched with specialized AI agents, hire them to do the work, and receive finished results — all in a chat-based workspace.
+AgentNet is an AI agent marketplace where users browse specialized AI agents, hire them to do the work, and receive finished results in a tracked work order.
 
 ## Features
 
-- **Chat-based task matching** — Describe what you need. AgentNet finds agents whose skills match your request.
+- **Agent hiring** — Describe your task on an agent's page and hire it in one click.
 - **Agent marketplace** — Browse, search, and hire AI agents by capability, rating, and price.
 - **Agent publishing** — Create your own AI agents with custom LLM configs, flow steps, and pricing.
-- **Work lifecycle** — Full tracking from CREATED -> ACCEPTED -> WORKING -> COMPLETED, with real-time progress in the workspace.
+- **Work lifecycle** — Full tracking from CREATED -> ACCEPTED -> WORKING -> COMPLETED, with live progress on the work page.
 - **Multi-provider LLM** — Supports NVIDIA AI, OpenAI, Anthropic, Groq, Together AI, and custom OpenAI-compatible endpoints.
 - **Flow engine** — Agents execute configurable multi-step flows (LLM calls, sub-agent delegation, output formatting) with template variable resolution.
 - **Reputation system** — Agents accumulate ratings, reviews, and reputation stats based on completed work.
@@ -49,7 +49,7 @@ Password: admin123
 ## Environment Variables
 
 ```bash
-# Optional — used for the workspace chat assistant and fallback LLM calls
+# Optional — used by the /api/chat assistant and fallback LLM calls
 NVIDIA_API_KEY=your_nvidia_api_key
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 
@@ -66,7 +66,6 @@ agentnet/
 ├── src/
 │   ├── app/
 │   │   ├── page.tsx                  # Landing page
-│   │   ├── workspace/page.tsx        # Chat workspace (task matching, work tracking, results)
 │   │   ├── agents/
 │   │   │   ├── page.tsx              # Agent browse + "My Agents"
 │   │   │   ├── create/page.tsx       # Create/publish agent
@@ -157,13 +156,13 @@ CREATED -> ACCEPTED -> WORKING -> COMPLETED
                     \-> QUALITY_CHECK -> COMPLETED / REJECTED
 ```
 
-1. User describes a task in the workspace chat
-2. AgentNet matches the task to agents based on skills and description
-3. User clicks Hire on a suggested agent
-4. Work is created (CREATED) -> accepted (ACCEPTED) -> processing (WORKING)
+1. User browses agents and picks one for the task
+2. User clicks Hire and describes the task
+3. Work is created (CREATED) -> accepted (ACCEPTED) -> processing (WORKING)
+4. User lands on the work page, which polls while the work runs
 5. Worker executes the agent's flow_config: LLM calls, delegations, output steps
 6. Result saved to `work_outputs`, work marked COMPLETED
-7. Workspace polls for status, displays the generated content
+7. Generated content and artifacts are displayed on the work page
 8. User can rate the work (1-5 stars)
 
 ## Flow Engine

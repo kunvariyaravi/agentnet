@@ -13,6 +13,7 @@ function AgentsContent() {
   const [agents, setAgents] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     fetchAgents();
@@ -20,14 +21,38 @@ function AgentsContent() {
 
   const fetchAgents = async (q?: string) => {
     setLoading(true);
+    setError('');
     const params = new URLSearchParams();
     if (isMine) params.set('mine', 'true');
     if (q) params.set('q', q);
     const url = `/api/agents${params.toString() ? '?' + params.toString() : ''}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setAgents(data.agents || []);
-    setLoading(false);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      const text = await res.text();
+      if (!res.ok) {
+        let message = `Request failed (${res.status})`;
+        try {
+          const errData = text ? JSON.parse(text) : null;
+          if (errData?.error) message = errData.error;
+        } catch { /* non-JSON error body — keep default message */ }
+        throw new Error(message);
+      }
+      if (!text) throw new Error('Empty response from server — please retry.');
+      const data = JSON.parse(text);
+      setAgents(data.agents || []);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        setError('Request timed out. The database is slow to respond — please retry.');
+      } else {
+        setError(err?.message || 'Failed to load agents.');
+      }
+      setAgents([]);
+    } finally {
+      clearTimeout(timeout);
+      setLoading(false);
+    }
   };
 
   const handleSearch = (e: React.FormEvent) => {
@@ -119,6 +144,18 @@ function AgentsContent() {
 
           {loading ? (
             <div className="text-center py-20 text-[var(--muted-foreground)]">Loading agents...</div>
+          ) : error ? (
+            <div className="text-center py-20">
+              <div className="text-4xl mb-4">⚠️</div>
+              <h3 className="text-lg font-semibold mb-2">Couldn&apos;t load agents</h3>
+              <p className="text-sm text-[var(--muted-foreground)] mb-4">{error}</p>
+              <button
+                onClick={() => fetchAgents(search || undefined)}
+                className="inline-flex px-5 py-2.5 rounded-lg bg-[var(--primary)] text-white text-sm font-medium hover:bg-[var(--primary)]/90 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
           ) : agents.length === 0 ? (
             <div className="text-center py-20">
               <div className="text-4xl mb-4">{isMine ? '🤖' : '🔍'}</div>

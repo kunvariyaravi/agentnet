@@ -37,9 +37,12 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Rate limit general API: 60 requests per minute
-  if (pathname.startsWith('/api/')) {
-    if (!getRateLimit(`api:${ip}`, 60_000, 60)) {
+  // Rate limit general API: 300 requests per minute.
+  // Must stay well above work-detail polling (~1 req / 2.5s per open work)
+  // or users get 429s that look like sign-outs.
+  // /api/auth/me is a cheap JWT check — exempt it entirely.
+  if (pathname.startsWith('/api/') && !pathname.startsWith('/api/auth/me')) {
+    if (!getRateLimit(`api:${ip}`, 60_000, 300)) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
     }
   }

@@ -13,7 +13,15 @@ export default function Navbar() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => setUser(d.user)).catch(() => {});
+    fetch('/api/auth/me')
+      .then(async r => {
+        // Only 401 means logged out — transient 429/5xx must not flip the nav to logged-out state
+        if (r.status === 401) { setUser(null); return; }
+        if (!r.ok) return;
+        const d = await r.json();
+        setUser(d.user ?? null);
+      })
+      .catch(() => {});
   }, []);
 
   // Close profile dropdown on route change
@@ -40,7 +48,7 @@ export default function Navbar() {
   };
 
   const navLinks = [
-    { href: '/workspace', label: 'New Work' },
+    { href: '/works', label: 'My Works' },
     { href: '/agents', label: 'Browse' },
     { href: '/agents/create', label: 'Publish' },
   ];
@@ -56,7 +64,7 @@ export default function Navbar() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           {/* Logo */}
-          <Link href={user ? "/workspace" : "/"} className="flex items-center gap-2.5 shrink-0">
+          <Link href={user ? "/agents" : "/"} className="flex items-center gap-2.5 shrink-0">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)]">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2L2 7l10 5 10-5-10-5z"/>

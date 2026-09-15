@@ -1,7 +1,7 @@
 // Worker module: executes agent flows, supports sub-agent delegation
 import { queryOne, queryAll, run, ensureSchema } from './db';
 import { v4 as uuid } from 'uuid';
-import { callLLM, LLMConfig } from './llm';
+import { callLLM, callImageModel, isImageModel, LLMConfig } from './llm';
 import { FlowStep, DEFAULT_FLOW } from './agent-templates';
 import { generateWorkNumber } from './auth';
 
@@ -157,6 +157,28 @@ async function executeLLMStep(
 
   await logEvent(workId, 'WORKING', `Executing: ${step.name}`);
 
+  // Image models (FLUX, SD, Qwen-Image, …) serve /v1/images/generations,
+  // not /v1/chat/completions — route them to the image endpoint, generate
+  // a real PNG artifact, and expose a markdown stub for downstream steps.
+  if (isImageModel(stepConfig.model)) {
+    const imagePrompt = userPrompt;
+    const { b64, mime } = await callImageModel(stepConfig, imagePrompt);
+    const ext = mime === 'image/jpeg' ? 'jpg' : 'png';
+    const filename = `generated-${step.id}.${ext}`;
+    await saveImageOutput(workId, filename, b64, mime);
+
+    const output = `![Generated image](${filename})\n\n**Prompt:** ${imagePrompt}\n\n**Model:** ${stepConfig.model}`;
+    context.step[step.id] = output;
+    // Also store as {stepId: {output: ...}} so {{stepId.output}} templates resolve correctly
+    context[step.id] = { output };
+
+    await logEvent(workId, 'WORKING', `Completed: ${step.name} (image saved as ${filename})`, {
+      step: step.id,
+      filename,
+    });
+    return;
+  }
+
   const output = await callLLM(stepConfig, systemPrompt, userPrompt);
   context.step[step.id] = output;
   // Also store as {stepId: {output: ...}} so {{stepId.output}} templates resolve correctly
@@ -283,6 +305,20 @@ async function saveOutput(workId: string, filename: string, content: string): Pr
     INSERT INTO work_outputs (id, work_id, file_name, file_url, file_type, artifact_type)
     VALUES ($1, $2, $3, $4, $5, 'content')
   `, [uuid(), workId, filename, content, 'text/markdown']);
+}
+
+async function saveImageOutput(workId: string, filename: string, b64: string, mime: string): Promise<void> {
+  if (!b64) return;
+  await run(`
+    INSERT INTO work_outputs (id, work_id, file_name, file_url, file_type, artifact_type)
+    VALUES ($1, $2, $3, $4, $5, 'file')
+  `, [
+    uuid(),
+    workId,
+    filename,
+    `data:${mime};base64,${b64}`,
+    mime,
+  ]);
 }
 
 async function logEvent(workId: string, status: string, message: string, metadata?: any): Promise<void> {

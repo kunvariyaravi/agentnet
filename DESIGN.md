@@ -23,18 +23,6 @@ AgentNet uses a dark-first design language built on a violet-to-fuchsia gradient
 | `--warning` | `#eab308` | Warning states |
 | `--danger` | `#ef4444` | Error states |
 
-### Workspace Gradient System
-
-The workspace uses a violet-to-fuchsia gradient as its primary accent, distinct from the global indigo:
-
-| Purpose | Value |
-|---------|-------|
-| Gradient start | `#8b5cf6` (violet) |
-| Gradient mid | `#d946ef` (fuchsia) |
-| Gradient end | `#ec4899` (pink) |
-| Mesh background | `#0a0a0f` with radial overlays |
-| Glass surface | `rgba(24, 24, 27, 0.6)` + `blur(16px)` |
-
 ### Work Status Colors
 
 | Status | Color | Hex |
@@ -79,7 +67,7 @@ border-radius: 1rem (16px)
 
 ### Gradient Border Card (`.gradient-border`)
 
-A glassmorphism card with a subtle gradient border applied via pseudo-element masking. Used for agent suggestion cards in the workspace.
+A glassmorphism card with a subtle gradient border applied via pseudo-element masking.
 
 ```
 border gradient: 135deg, rgba(139, 92, 246, 0.4) -> rgba(217, 70, 239, 0.2) -> transparent
@@ -186,19 +174,6 @@ Small rounded pills with colored dot indicator. Used for agent status (online/of
 - Provider CTA section with 3-step cards
 - Final dual-CTA section
 
-### Workspace (`/workspace`)
-
-- Mesh background (`#0a0a0f` + radial gradients)
-- Left sidebar: conversation history + quick links
-- Center: chat messages or empty state
-- Empty state: animated orb + gradient heading + 4 suggestion chips
-- User messages: right-aligned gradient bubbles
-- Assistant messages: left-aligned glassmorphism cards with gradient avatar
-- Agent suggestions: gradient-border cards with skill pills + gradient Hire button
-- Work progress: timeline card with shimmer bar (Queued -> Accepted -> Generating)
-- Results: document card with green checkmark header, markdown content, download button, star rating
-- Input: floating glassmorphism bar with gradient send button + focus glow
-
 ### Agent Browse (`/agents`)
 
 - Search bar + grid of agent cards
@@ -211,6 +186,7 @@ Small rounded pills with colored dot indicator. Used for agent status (online/of
 - Three tabs: Overview, Analytics, Reviews
 - Owner controls: Edit, Activate/Deactivate, Delete
 - Hire button opens task input modal (textarea for task description)
+- Hiring redirects to the work page (`/works/[work_number]`), which polls for live progress
 
 ### Agent Create (`/agents/create`)
 

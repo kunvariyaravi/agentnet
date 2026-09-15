@@ -6,25 +6,65 @@ type Theme = 'light' | 'dark';
 
 function getInitialTheme(): Theme {
   if (typeof window === 'undefined') return 'dark';
+  const dom = document.documentElement.dataset.theme;
+  if (dom === 'light' || dom === 'dark') return dom;
   const stored = localStorage.getItem('agentnet-theme');
   if (stored === 'light' || stored === 'dark') return stored;
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+function applyTheme(theme: Theme) {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+  document.documentElement.style.colorScheme = theme;
+  localStorage.setItem('agentnet-theme', theme);
+}
+
 export default function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>('dark');
+  const [mounted, setMounted] = useState(false);
 
+  // Read once on mount — never write before the stored value is loaded,
+  // otherwise every remount (each page has its own Navbar) would
+  // overwrite the saved choice with the 'dark' initial state.
   useEffect(() => {
-    setTheme(getInitialTheme());
+    const initial = getInitialTheme();
+    applyTheme(initial);
+    setTheme(initial);
+    setMounted(true);
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-    localStorage.setItem('agentnet-theme', theme);
-  }, [theme]);
+    if (!mounted) return;
+    applyTheme(theme);
+  }, [theme, mounted]);
+
+  // Keep multiple toggles / tabs in sync
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'agentnet-theme' && (e.newValue === 'light' || e.newValue === 'dark')) {
+        setTheme(e.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const toggle = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+
+  // Avoid flashing the wrong icon on first paint — the page colors are
+  // already correct via the blocking init script in layout.tsx.
+  if (!mounted) {
+    return (
+      <button
+        aria-label="Toggle theme"
+        disabled
+        className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors"
+      >
+        <span className="block h-[18px] w-[18px]" />
+      </button>
+    );
+  }
 
   return (
     <button

@@ -24,7 +24,7 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
-      router.push('/workspace');
+      router.push('/agents');
     } catch (err: any) {
       setError(err.message);
     } finally {

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import WorkStatus from '@/components/WorkStatus';
+import { fetchMe } from '@/lib/session-client';
 import Link from 'next/link';
 
 export default function WorksPage() {
@@ -12,8 +13,12 @@ export default function WorksPage() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (!d.user) { router.push('/login'); return; }
+    fetchMe().then(({ user: me, transient }) => {
+      if (!me) {
+        if (!transient) router.push('/login');
+        else setLoading(false);
+        return;
+      }
       fetch('/api/works').then(r => r.json()).then(data => {
         setWorks(data.works || []);
         setLoading(false);
@@ -32,10 +37,10 @@ export default function WorksPage() {
               <p className="text-[var(--muted-foreground)]">Track your hired agent work</p>
             </div>
             <Link
-              href="/workspace"
+              href="/agents"
               className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white text-sm font-medium hover:bg-[var(--primary)]/90 transition-colors"
             >
-              New Work
+              Hire an Agent
             </Link>
           </div>
 
@@ -45,8 +50,8 @@ export default function WorksPage() {
             <div className="text-center py-20">
               <div className="text-4xl mb-4">📋</div>
               <h3 className="text-lg font-semibold mb-2">No works yet</h3>
-              <p className="text-sm text-[var(--muted-foreground)] mb-4">Start by describing what you need done</p>
-              <Link href="/workspace" className="text-sm text-[var(--primary)] hover:underline">Go to workspace →</Link>
+              <p className="text-sm text-[var(--muted-foreground)] mb-4">Browse the marketplace and hire an agent for your task</p>
+              <Link href="/agents" className="text-sm text-[var(--primary)] hover:underline">Browse agents →</Link>
             </div>
           ) : (
             <div className="space-y-3">

@@ -6,51 +6,59 @@ import { AGENT_TEMPLATES } from '@/lib/agent-templates';
 import { PROVIDER_PRESETS } from '@/lib/llm';
 
 export async function GET(request: Request) {
-  await ensureSchema();
-  const { searchParams } = new URL(request.url);
-  const q = searchParams.get('q');
-  const mine = searchParams.get('mine');
-  const status = searchParams.get('status');
+  try {
+    await ensureSchema();
+    const { searchParams } = new URL(request.url);
+    const q = searchParams.get('q');
+    const mine = searchParams.get('mine');
+    const status = searchParams.get('status');
 
-  // Build query dynamically
-  const conditions: string[] = [];
-  const params: any[] = [];
+    // Build query dynamically
+    const conditions: string[] = [];
+    const params: any[] = [];
 
-  if (mine === 'true') {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    conditions.push(`a.owner_id = $${params.length + 1}`);
-    params.push(session.id);
+    if (mine === 'true') {
+      const session = await getSession();
+      if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      conditions.push(`a.owner_id::text = $${params.length + 1}`);
+      params.push(session.id);
+    }
+
+    if (status) {
+      conditions.push(`a.status = $${params.length + 1}`);
+      params.push(status);
+    }
+
+    if (q) {
+      const like = `%${q}%`;
+      conditions.push(`(a.name LIKE $${params.length + 1} OR a.identity LIKE $${params.length + 2} OR a.description LIKE $${params.length + 3} OR s.name LIKE $${params.length + 4} OR a.agent_type LIKE $${params.length + 5})`);
+      params.push(like, like, like, like, like);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const agents = await queryAll(`
+      SELECT a.id, a.identity, a.name, a.description, a.status, a.technology,
+        a.pricing_type, a.price, a.avg_delivery_minutes, a.is_simulated,
+        a.agent_type, a.llm_provider, a.llm_model, a.llm_base_url, a.auto_execute,
+        ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate,
+        string_agg(DISTINCT s.name, ',') as skill_names
+      FROM agents a
+      LEFT JOIN agent_reputation ar ON a.id::text = ar.agent_id::text
+      LEFT JOIN agent_skills s ON a.id::text = s.agent_id::text
+      ${whereClause}
+      GROUP BY a.id, ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate
+      ORDER BY ar.avg_rating DESC NULLS LAST
+    `, params);
+
+    return NextResponse.json({ agents });
+  } catch (err: any) {
+    console.error('GET /api/agents failed:', err?.message || err);
+    return NextResponse.json(
+      { error: 'Failed to load agents. The database is unreachable or slow — please retry.' },
+      { status: 503 },
+    );
   }
-
-  if (status) {
-    conditions.push(`a.status = $${params.length + 1}`);
-    params.push(status);
-  }
-
-  if (q) {
-    const like = `%${q}%`;
-    conditions.push(`(a.name LIKE $${params.length + 1} OR a.identity LIKE $${params.length + 2} OR a.description LIKE $${params.length + 3} OR s.name LIKE $${params.length + 4} OR a.agent_type LIKE $${params.length + 5})`);
-    params.push(like, like, like, like, like);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  const agents = await queryAll(`
-    SELECT a.id, a.identity, a.name, a.description, a.status, a.technology,
-      a.pricing_type, a.price, a.avg_delivery_minutes, a.is_simulated,
-      a.agent_type, a.llm_provider, a.llm_model, a.llm_base_url, a.auto_execute,
-      ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate,
-      string_agg(DISTINCT s.name, ',') as skill_names
-    FROM agents a
-    LEFT JOIN agent_reputation ar ON a.id = ar.agent_id
-    LEFT JOIN agent_skills s ON a.id = s.agent_id
-    ${whereClause}
-    GROUP BY a.id, ar.total_works, ar.completed_works, ar.avg_rating, ar.success_rate
-    ORDER BY ar.avg_rating DESC NULLS LAST
-  `, params);
-
-  return NextResponse.json({ agents });
 }
 
 export async function POST(request: Request) {

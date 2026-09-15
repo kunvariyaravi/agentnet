@@ -23,16 +23,36 @@ export default function WorkDetailPage({ params }: { params: Promise<{ id: strin
     fetchWork();
   }, [id]);
 
+  // Live progress: hiring sends the user straight here while the work is still
+  // running, so poll until it reaches a terminal state.
+  useEffect(() => {
+    if (!work) return;
+    const inProgress = ['CREATED', 'ACCEPTED', 'WORKING', 'INPUT_REQUIRED', 'QUALITY_CHECK'];
+    if (!inProgress.includes(work.status)) return;
+    const timer = setInterval(fetchWork, 2500);
+    return () => clearInterval(timer);
+  }, [work?.status, id]);
+
   const fetchWork = async () => {
-    const res = await fetch(`/api/works/${id}`);
-    const data = await res.json();
-    setWork(data.work);
-    setEvents(data.events || []);
-    setOutputs(data.outputs || []);
-    setRating(data.rating);
-    setReview(data.review);
-    setChildWorks(data.childWorks || []);
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/works/${id}`);
+      const text = await res.text();
+      if (!res.ok || !text) {
+        setWork(null);
+        return;
+      }
+      const data = JSON.parse(text);
+      setWork(data.work);
+      setEvents(data.events || []);
+      setOutputs(data.outputs || []);
+      setRating(data.rating);
+      setReview(data.review);
+      setChildWorks(data.childWorks || []);
+    } catch {
+      setWork(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRate = async (score: number) => {
@@ -155,6 +175,31 @@ export default function WorkDetailPage({ params }: { params: Promise<{ id: strin
                 {outputs.filter((o: any) => o.artifact_type !== 'content').map((output: any) => {
                   const ext = output.file_name?.match(/\.[^.]+$/)?.[0] || '';
                   const hash = output.id?.replace(/-/g, '').slice(0, 8) || 'output';
+                  const isImage = typeof output.file_type === 'string'
+                    && output.file_type.startsWith('image/')
+                    && typeof output.file_url === 'string'
+                    && output.file_url.startsWith('data:');
+                  if (isImage) {
+                    return (
+                      <div key={output.id} className="p-3 rounded-lg bg-[var(--secondary)]">
+                        <img
+                          src={output.file_url}
+                          alt={output.file_name || 'Generated image'}
+                          className="w-full rounded-lg"
+                        />
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="text-sm font-mono">{output.file_name}</span>
+                          <a
+                            href={output.file_url}
+                            download={output.file_name || 'image.png'}
+                            className="text-xs text-[var(--primary)] hover:underline"
+                          >
+                            Download
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                   <div key={output.id} className="flex items-center justify-between p-3 rounded-lg bg-[var(--secondary)]">
                     <div className="flex items-center gap-2">

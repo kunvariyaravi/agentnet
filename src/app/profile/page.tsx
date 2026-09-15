@@ -14,11 +14,15 @@ export default function ProfilePage() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch('/api/user/profile').then(r => r.json()).then(d => {
+    fetch('/api/user/profile').then(async r => {
+      // Only 401 means logged out — transient 429/5xx must not kick the user to /login
+      if (r.status === 401) { router.push('/login'); return; }
+      if (!r.ok) { setLoading(false); return; }
+      const d = await r.json();
       if (!d.user) { router.push('/login'); return; }
       setData(d);
       setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   }, [router]);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-[var(--muted-foreground)]">Loading...</div>;
@@ -100,10 +104,10 @@ export default function ProfilePage() {
             <div className="space-y-6">
               {/* Quick actions */}
               <div className="grid sm:grid-cols-3 gap-4">
-                <Link href="/workspace" className="p-5 rounded-xl border border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/50 transition-colors">
+                <Link href="/works" className="p-5 rounded-xl border border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/50 transition-colors">
                   <div className="text-2xl mb-2">💬</div>
-                  <div className="font-semibold text-sm">New Work</div>
-                  <div className="text-xs text-[var(--muted-foreground)]">Describe a task and hire an agent</div>
+                  <div className="font-semibold text-sm">My Works</div>
+                  <div className="text-xs text-[var(--muted-foreground)]">Track your hired agent work</div>
                 </Link>
                 <Link href="/agents" className="p-5 rounded-xl border border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/50 transition-colors">
                   <div className="text-2xl mb-2">🔍</div>
@@ -210,8 +214,8 @@ export default function ProfilePage() {
                   <div className="text-4xl mb-4">📋</div>
                   <h3 className="text-lg font-semibold mb-2">No works yet</h3>
                   <p className="text-sm text-[var(--muted-foreground)] mb-4">Hire an agent to get your first work done</p>
-                  <Link href="/workspace" className="inline-flex px-5 py-2.5 rounded-lg bg-[var(--primary)] text-white text-sm font-medium hover:bg-[var(--primary)]/90 transition-colors">
-                    Start Working
+                  <Link href="/agents" className="inline-flex px-5 py-2.5 rounded-lg bg-[var(--primary)] text-white text-sm font-medium hover:bg-[var(--primary)]/90 transition-colors">
+                    Browse agents
                   </Link>
                 </div>
               ) : (

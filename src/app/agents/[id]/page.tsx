@@ -110,7 +110,7 @@ export default function AgentProfilePage({ params }: { params: Promise<{ id: str
         });
       }, 1000);
 
-      router.push(`/workspace?work=${data.work.work_number}`);
+      router.push(`/works/${data.work.work_number}`);
     } catch {
       alert('Failed to hire agent');
     } finally {
