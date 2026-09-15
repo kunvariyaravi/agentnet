@@ -15,7 +15,7 @@ export async function GET(
       ar.avg_value, ar.success_rate, ar.total_rated
     FROM agents a
     LEFT JOIN agent_reputation ar ON a.id = ar.agent_id
-    WHERE a.id = $1 OR a.identity = $1
+    WHERE a.id::text = $1 OR a.identity = $1
   `, [id]) as any;
 
   if (!agent) {
@@ -73,7 +73,7 @@ export async function PUT(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await ensureSchema();
-  const agent = await queryOne('SELECT * FROM agents WHERE id = $1 OR identity = $1', [id]) as any;
+  const agent = await queryOne('SELECT * FROM agents WHERE id::text = $1 OR identity = $1', [id]) as any;
 
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
@@ -164,7 +164,7 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await ensureSchema();
-  const agent = await queryOne('SELECT * FROM agents WHERE id = $1 OR identity = $1', [id]) as any;
+  const agent = await queryOne('SELECT * FROM agents WHERE id::text = $1 OR identity = $1', [id]) as any;
 
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
