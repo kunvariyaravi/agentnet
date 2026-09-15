@@ -103,6 +103,26 @@ export default function WorkDetailPage({ params }: { params: Promise<{ id: strin
             </div>
           </div>
 
+          {/* Failure banner — surface worker error */}
+          {work.status === 'FAILED' && (
+            <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] p-4 mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-6 w-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(239, 68, 68, 0.12)' }}>
+                  <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+                <span className="text-sm font-medium text-red-400">Work failed</span>
+              </div>
+              <p className="text-sm text-[var(--foreground)] leading-relaxed break-words">
+                {(() => {
+                  const failed = (events || []).filter((e: any) => e.status === 'FAILED' && e.message);
+                  return failed.length > 0 ? failed[failed.length - 1].message : 'The agent was unable to complete this task.';
+                })()}
+              </p>
+            </div>
+          )}
+
           {/* Timeline */}
           <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 mb-6">
             <h2 className="font-semibold mb-4">Timeline</h2>

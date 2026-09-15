@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: dark;
   --background: #09090b;
   --foreground: #fafafa;
   --card: #18181b;
@@ -19,6 +20,32 @@
   --success: #22c55e;
   --warning: #eab308;
   --danger: #ef4444;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --primary: #6366f1;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #6366f1;
+  --success: #16a34a;
+  --warning: #ca8a04;
+  --danger: #dc2626;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 * {
@@ -87,12 +114,21 @@ body {
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
+[data-theme='light'] .glass {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+}
 
 /* Gradient border */
 .gradient-border {
   position: relative;
   background: rgba(24, 24, 27, 0.8);
   border-radius: 1rem;
+}
+[data-theme='light'] .gradient-border {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
 }
 .gradient-border::before {
   content: '';
@@ -124,6 +160,12 @@ body {
   background-image:
     radial-gradient(ellipse 60% 50% at 20% 0%, rgba(139, 92, 246, 0.08), transparent),
     radial-gradient(ellipse 50% 40% at 80% 100%, rgba(217, 70, 239, 0.06), transparent);
+}
+[data-theme='light'] .mesh-bg {
+  background-color: #fafafa;
+  background-image:
+    radial-gradient(ellipse 60% 50% at 20% 0%, rgba(139, 92, 246, 0.08), transparent),
+    radial-gradient(ellipse 50% 40% at 80% 100%, rgba(217, 70, 239, 0.07), transparent);
 }
 
 /* Suggestion chip hover */

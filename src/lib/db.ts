@@ -28,6 +28,15 @@ let schemaInitialized = false;
 export async function ensureSchema(): Promise<void> {
   if (schemaInitialized) return;
 
+  // Fast check: if users table exists, schema is already initialized
+  const check = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users') as exists`
+  );
+  if (check.rows[0].exists) {
+    schemaInitialized = true;
+    return;
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

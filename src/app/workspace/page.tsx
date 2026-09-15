@@ -11,6 +11,13 @@ interface Message {
   agents?: any[];
   work?: any;
   workContent?: string;
+  workError?: string;
+}
+
+function getFailureMessage(data: any): string {
+  const failedEvents = (data.events || []).filter((e: any) => e.status === 'FAILED' && e.message);
+  const last = failedEvents[failedEvents.length - 1];
+  return last?.message || 'The agent was unable to complete this task.';
 }
 
 const completedWorkIds = new Set<string>();
@@ -32,6 +39,7 @@ function WorkspaceContent() {
   const [activeWorkId, setActiveWorkId] = useState<string | null>(null);
   const [workStatus, setWorkStatus] = useState<string>('');
   const [conversations, setConversations] = useState<any[]>([]);
+  const [works, setWorks] = useState<any[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -43,6 +51,7 @@ function WorkspaceContent() {
       else {
         setUser(d.user);
         loadConversations();
+        loadWorks();
       }
     });
   }, [router]);
@@ -57,6 +66,7 @@ function WorkspaceContent() {
       const work = data.work;
       setActiveWorkId(work.id);
       setWorkStatus(work.status);
+      loadWorks();
 
       // If work already completed, show results immediately
       if (work.status === 'COMPLETED' && data.outputs?.length > 0) {
@@ -67,15 +77,21 @@ function WorkspaceContent() {
           o.artifact_type === 'file' && o.file_name
         );
         const contentOutput = contentOutputs[contentOutputs.length - 1];
-        const fileOutput = fileOutputs[fileOutputs.length - 1];
         const content = contentOutput?.file_url || '';
-        const artifactName = fileOutput?.file_name || 'output.md';
 
         setMessages([{
           role: 'assistant',
           content: `Hired **${work.agent_name || 'Agent'}** (${work.agent_identity}) for $${work.price || 0}/work.`,
           work: work,
           workContent: content,
+        }]);
+      } else if (work.status === 'FAILED') {
+        const failureMessage = getFailureMessage(data);
+        setMessages([{
+          role: 'assistant',
+          content: `Hired **${work.agent_name || 'Agent'}** (${work.agent_identity}) for $${work.price || 0}/work.\n\nWork **#${work.work_number}** failed.`,
+          work: work,
+          workError: failureMessage,
         }]);
       } else {
         setMessages([{
@@ -109,6 +125,58 @@ function WorkspaceContent() {
       const res = await fetch('/api/conversations');
       const data = await res.json();
       setConversations(data.conversations || []);
+    } catch {}
+  };
+
+  const loadWorks = async () => {
+    try {
+      const res = await fetch('/api/works');
+      const data = await res.json();
+      setWorks(data.works || []);
+    } catch {}
+  };
+
+  const displayWork = (data: any) => {
+    const work = data.work;
+    if (!work) return;
+    setActiveWorkId(work.id);
+    setWorkStatus(work.status);
+    completedWorkIds.delete(work.id);
+
+    if (work.status === 'COMPLETED') {
+      const contentOutputs = (data.outputs || []).filter((o: any) =>
+        o.artifact_type === 'content' && o.file_url && o.file_url.trim() !== ''
+      );
+      const contentOutput = contentOutputs[contentOutputs.length - 1];
+      const content = contentOutput?.file_url || '';
+      setMessages([{
+        role: 'assistant',
+        content: `Hired **${work.agent_name || 'Agent'}** (${work.agent_identity}) for $${work.price || 0}/work.`,
+        work,
+        workContent: content,
+      }]);
+    } else if (work.status === 'FAILED') {
+      setMessages([{
+        role: 'assistant',
+        content: `Hired **${work.agent_name || 'Agent'}** (${work.agent_identity}) for $${work.price || 0}/work.\n\nWork **#${work.work_number}** failed.`,
+        work,
+        workError: getFailureMessage(data),
+      }]);
+    } else {
+      setMessages([{
+        role: 'assistant',
+        content: `Hired **${work.agent_name || 'Agent'}** (${work.agent_identity}) for $${work.price || 0}/work.\n\nAgent is processing your request...`,
+        work,
+      }]);
+    }
+    setSidebarOpen(false);
+  };
+
+  const loadWorkById = async (workId: string) => {
+    try {
+      const res = await fetch(`/api/works/${workId}`);
+      const data = await res.json();
+      if (data.work) displayWork(data);
     } catch {}
   };
 
@@ -161,7 +229,6 @@ function WorkspaceContent() {
             const contentOutput = contentOutputs[contentOutputs.length - 1];
             const fileOutput = fileOutputs[fileOutputs.length - 1];
             const content = contentOutput?.file_url || '';
-            const artifactName = fileOutput?.file_name || 'output.md';
 
             setMessages(prev => [...prev, {
               role: 'assistant',
@@ -170,13 +237,16 @@ function WorkspaceContent() {
               workContent: content,
             }]);
           } else {
+            const failureMessage = getFailureMessage(data);
             setMessages(prev => [...prev, {
               role: 'assistant',
-              content: `Work **#${data.work.work_number}** failed. The agent was unable to complete this task.`,
+              content: `Work **#${data.work.work_number}** failed.`,
               work: data.work,
+              workError: failureMessage,
             }]);
           }
           loadConversations();
+          loadWorks();
         }
       } catch {}
     }, 2500);
@@ -236,6 +306,7 @@ function WorkspaceContent() {
       completedWorkIds.delete(data.work.id);
       setActiveWorkId(data.work.id);
       setWorkStatus('CREATED');
+      loadWorks();
 
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -295,6 +366,39 @@ function WorkspaceContent() {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
+          {works.length > 0 && (
+            <>
+              <div className="flex items-center justify-between px-3 py-2">
+                <div className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">Works</div>
+                <Link href="/works" className="text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors">
+                  View all
+                </Link>
+              </div>
+              {works.slice(0, 20).map((w: any) => {
+                const dotColor =
+                  w.status === 'COMPLETED' ? 'bg-[var(--success)]' :
+                  w.status === 'FAILED' ? 'bg-[var(--danger)]' :
+                  w.status === 'WORKING' ? 'bg-amber-400 animate-pulse' :
+                  'bg-[var(--muted-foreground)]';
+                return (
+                  <button
+                    key={w.id}
+                    onClick={() => loadWorkById(w.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${activeWorkId === w.id ? 'bg-white/5 text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:bg-white/[0.03] hover:text-[var(--foreground)]'}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotColor}`} />
+                      <span className="text-[11px] font-mono shrink-0">#{w.work_number}</span>
+                      <span className="text-xs truncate flex-1">{w.title}</span>
+                    </div>
+                    <div className="ml-3.5 mt-0.5 text-[10px] text-[var(--muted-foreground)] truncate">
+                      {w.agent_name || w.agent_identity} · {w.status.toLowerCase()}
+                    </div>
+                  </button>
+                );
+              })}
+            </>
+          )}
           {conversations.length > 0 && (
             <>
               <div className="text-[10px] font-semibold text-[var(--muted-foreground)] px-3 py-2 uppercase tracking-widest">History</div>
@@ -308,6 +412,11 @@ function WorkspaceContent() {
                 </button>
               ))}
             </>
+          )}
+          {works.length === 0 && conversations.length === 0 && (
+            <div className="px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+              No tasks yet. Describe a task to get started.
+            </div>
           )}
         </div>
         <div className="p-3 border-t border-white/5">
@@ -532,6 +641,23 @@ function WorkspaceContent() {
                                     </div>
                                   </div>
                                 )}
+                              </div>
+                            )}
+
+                            {/* Failure message — show actual error from worker */}
+                            {msg.workError && (
+                              <div className="mt-3 rounded-2xl overflow-hidden border border-red-500/20 bg-red-500/[0.06]">
+                                <div className="px-4 py-3 border-b border-red-500/10 flex items-center gap-2.5">
+                                  <div className="h-6 w-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(239, 68, 68, 0.12)' }}>
+                                    <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </div>
+                                  <span className="text-xs font-medium text-red-400">Failed{msg.work?.work_number ? ` — #${msg.work.work_number}` : ''}</span>
+                                </div>
+                                <div className="p-4">
+                                  <p className="text-sm text-[var(--foreground)] leading-relaxed break-words">{msg.workError}</p>
+                                </div>
                               </div>
                             )}
                           </div>

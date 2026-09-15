@@ -56,9 +56,8 @@ export const PROVIDER_PRESETS: Record<string, { name: string; baseUrl: string; m
 };
 
 function resolveConfig(config: LLMConfig): { apiKey: string; baseUrl: string; model: string } {
-  // Fall back to env vars if per-agent config is missing
-  const apiKey = config.apiKey || process.env.NVIDIA_API_KEY || '';
-  const baseUrl = config.baseUrl || process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+  const apiKey = config.apiKey || '';
+  const baseUrl = config.baseUrl || 'https://integrate.api.nvidia.com/v1';
   const model = config.model || 'meta/llama-3.2-11b-vision-instruct';
   return { apiKey, baseUrl, model };
 }
@@ -72,7 +71,7 @@ export async function callLLM(
 
   if (!apiKey) {
     throw new Error(
-      'No API key configured. Set NVIDIA_API_KEY in .env.local or provide a per-agent API key in the agent LLM configuration.',
+      'No API key configured. Set an API key in the agent edit page (/agents/{id}/edit).',
     );
   }
 

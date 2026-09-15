@@ -67,9 +67,9 @@ export default function EditAgentPage({ params }: { params: Promise<{ id: string
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/auth/me').then(r => r.json()),
+      fetch('/api/auth/me', { credentials: 'include' }).then(r => r.json()),
       fetch('/api/agents/templates').then(r => r.json()),
-      fetch(`/api/agents/${id}`).then(r => r.json()),
+      fetch(`/api/agents/${id}`, { credentials: 'include' }).then(r => r.json()),
     ]).then(([userRes, tplRes, agentRes]) => {
       if (!userRes.user) { router.push('/login'); return; }
       setUser(userRes.user);

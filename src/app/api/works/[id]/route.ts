@@ -18,7 +18,7 @@ export async function GET(
     FROM works w
     LEFT JOIN agents a ON w.agent_id = a.id
     LEFT JOIN users u ON w.requester_id = u.id
-    WHERE w.id = $1 OR w.work_number = $1
+    WHERE w.id::text = $1 OR w.work_number = $1
   `, [id]) as any;
 
   if (!work) {
